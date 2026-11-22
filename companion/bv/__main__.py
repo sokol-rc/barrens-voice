@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     # a take whose speech reaches its very end (about one in eight): "silence" - made again, a second
     # longer; "whisper" - made again only if Whisper does not hear the last word (1.5 GB of video memory)
     "f5_end_check": "silence",
+    "f5_profile": "quality",
     # slow voices drawn toward the bank's faster quarter (quantile) by this share, at most this many
     # times faster; each character's own tempo within this share either way (f5engine.line_seconds)
     "voice_pace_quantile": 0.25,

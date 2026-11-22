@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from .assign import Assigner
-from .audio import KNEE, Player, drain, limit, wav  # noqa: F401 - KNEE and limit: tests and tools take them here
+from .audio import KNEE, TAIL, Player, drain, limit, seconds, wav  # noqa: F401 - KNEE and limit: tests and tools take them here
 from . import gamevoices
 from .intonation import shape
 from .text import Accentor, numbers_to_words
@@ -51,6 +51,16 @@ PREFERRED = ("CUDAExecutionProvider", "DmlExecutionProvider")
 ONNX_REPO = "rgeraskin/barrens-voice-f5-onnx"
 
 
+PROFILE_STEPS = {"balanced": 8, "fastest": 6}
+
+
+def profile_steps(config: dict, engine: str) -> int | None:
+    profile = config.get("f5_profile")
+    if engine == "CUDAExecutionProvider" and isinstance(profile, str):
+        return PROFILE_STEPS.get(profile)
+    return None
+
+
 TARGET_RMS = 0.08     # about -22 dBFS: every voice about as loud as the others
 PEAK = 0.95
 
@@ -75,11 +85,11 @@ def tidy(samples, rate: int, gain_db: float = 0.0):
     return samples * gain
 
 
-def wav_bytes(samples, rate: int, volume: float, gain_db: float = 0.0) -> bytes:
+def wav_bytes(samples, rate: int, volume: float, gain_db: float = 0.0, *, tail=TAIL) -> bytes:
     import numpy as np
 
     samples = limit(tidy(samples, rate, gain_db) * volume)
-    return wav((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes(), rate)
+    return wav((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes(), rate, tail=tail)
 
 
 def provider(config: dict, available: list[str] | None = None) -> str:
@@ -351,9 +361,10 @@ class F5Speaker:
         from huggingface_hub import hf_hub_download
 
         from .f5onnx import F5Onnx
-        self.onnx = F5Onnx(models, Path(hf_hub_download(MODEL_REPO, VOCAB_FILE)), engine, self.log)
+        self.onnx = F5Onnx(models, Path(hf_hub_download(MODEL_REPO, VOCAB_FILE)), engine, self.log,
+                           steps=profile_steps(self.config, engine), cache=self.home / "tmp" / "f5-schedules")
         self.onnx.load()
-        if self.config.get("f5_end_check") == "whisper":
+        if self.config.get("f5_end_check") == "whisper" and not self.fastest():
             from .whisper_onnx import OnnxChecker
             checker = OnnxChecker(self.log, engine)
             self.checker = checker if checker.load() else None
@@ -374,6 +385,9 @@ class F5Speaker:
         return ref + line_seconds(self.pace(slot), self.target_pace, len(text.encode("utf-8")), rate, character,
                                   self.config)
 
+    def fastest(self) -> bool:
+        return self.config.get("f5_profile") == "fastest" and self.onnx.accelerated
+
     def _synth(self, slot, text: str, rate: int, character: str = ""):
         """The line in `slot`'s voice. F5 fits the speech into the length it is given, and sometimes
         the last syllable does not fit. A take whose speech runs to its very end (`silence_after`
@@ -389,7 +403,8 @@ class F5Speaker:
             self.ref_audio[ref_file] = resample(data.mean(axis=1), sr_in, self.onnx.in_rate)
         for attempt in range(2):
             wav, sr = self.onnx.synth(self.ref_audio[ref_file], ref_text, text, total)
-            if attempt or silence_after(wav, sr) >= CUT_TAIL or self._whole(wav, sr, text):
+            if (attempt or self.fastest() or self.config.get("f5_end_check") == "off"
+                    or silence_after(wav, sr) >= CUT_TAIL or self._whole(wav, sr, text)):
                 break
             total = ref + (total - ref) * 1.25
         return wav, sr
@@ -448,26 +463,39 @@ class F5Speaker:
                 self.log(f"    к синтезу: {text}" + (f"  ({len(groups)} части)" if len(groups) > 1 else ""))
             started = time.perf_counter()
             try:
-                import numpy as np
-                pieces, sr = [], 24000
-                for group in sentence_groups(text):
-                    piece, sr = self._synth(slot, group, line.rate, line.sender)
-                    piece = shape(piece, sr, group, self.config.get("question_intonation"))
-                    if pieces:
-                        pieces.append(np.zeros(int(sr * GAP), dtype=piece.dtype))
-                    pieces.append(piece)
+                parts = SENTENCE_END.split(text, maxsplit=1) if self.fastest() else [text]
+                duration = 0.0
+                for index, part in enumerate(parts):
                     if generation != self.player.generation:
-                        break                       # stopped meanwhile: no need to finish
-                wav = np.concatenate(pieces)
+                        break
+                    data = self._render(slot, part, line, generation, index < len(parts) - 1)
+                    if data is not None:
+                        if self.config.get("debug"):
+                            duration += seconds(data)
+                        if self.fastest():
+                            self.player.play(data, generation, low_latency=True)
+                        else:
+                            self.player.play(data, generation)
                 if self.config.get("debug"):
-                    self.log(f"  синтез {time.perf_counter() - started:.2f} с, {len(wav) / sr:.1f} с звука")
-                # in the try too: a gain typed wrong in config.json ("yell": null) costs the line, not the thread
-                # full loudness: the player applies the volume as the line plays (the mouse wheel reaches it)
-                data = wav_bytes(wav, sr, 1.0, self.config["kind_gain_db"].get(line.kind, 0))
+                    self.log(f"  синтез {time.perf_counter() - started:.2f} с, {duration:.1f} с звука")
             except Exception as e:  # noqa: BLE001 - one bad line must not stop the reader
                 self.log(f"F5-TTS: {e}")
-                continue
-            self.player.play(data, generation)
+
+    def _render(self, slot, text, line, generation, trailing_gap):
+        import numpy as np
+        pieces = []
+        for group in sentence_groups(text):
+            piece, sr = self._synth(slot, group, line.rate, line.sender)
+            if generation != self.player.generation:
+                return None
+            if pieces:
+                pieces.append(np.zeros(int(sr * GAP), dtype=piece.dtype))
+            pieces.append(shape(piece, sr, group, self.config.get("question_intonation")))
+        samples = np.concatenate(pieces)
+        gain = self.config["kind_gain_db"].get(line.kind, 0)
+        if trailing_gap:
+            return wav_bytes(samples, sr, 1.0, gain, tail=GAP)
+        return wav_bytes(samples, sr, 1.0, gain)
 
     # --- the reader's side ------------------------------------------------------------------
 

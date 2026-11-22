@@ -16,7 +16,7 @@ TAIL = 0.25   # seconds of silence after each line
 PAUSE_MAX = 90.0   # a pause whose "resume" never came ends by itself
 
 
-def wav(pcm: bytes, rate: int, volume: float = 1.0) -> bytes:
+def wav(pcm: bytes, rate: int, volume: float = 1.0, *, tail: float = TAIL) -> bytes:
     """16-bit mono PCM as a WAV file in memory, scaled by `volume` (0..2; over 1 clipped - the
     engines go through f5engine.wav_bytes, which limits softly), with the silent tail."""
     if abs(volume - 1) > 0.001:
@@ -25,7 +25,7 @@ def wav(pcm: bytes, rate: int, volume: float = 1.0) -> bytes:
         for i, s in enumerate(samples):
             samples[i] = max(-32768, min(32767, int(s * volume)))
         pcm = samples.tobytes()
-    pcm += b"\0\0" * int(rate * TAIL)
+    pcm += b"\0\0" * int(rate * tail)
     out = io.BytesIO()
     with wave.open(out, "wb") as w:
         w.setnchannels(1)
@@ -148,14 +148,14 @@ class StreamOut:
                 raise StreamBroken(f"PortAudio не запустился: {e}") from e
         self.device = self.mapper()
 
-    def play(self, data: bytes, level, stopped: threading.Event, length: float) -> None:
+    def play(self, data: bytes, level, stopped: threading.Event, length: float, *, low_latency=False) -> None:
         """Until the line ends or `stopped` is set (a stop or a pause cuts it). `length`: the outputs' interface (a fake
         waits it out); the stream knows its own end."""
         samples, rate = samples_of(data)
         state = {"pos": 0}
         for attempt in (1, 2):
             try:
-                if self._stream(samples, rate, state, level, stopped):
+                if self._stream(samples, rate, state, level, stopped, low_latency and attempt == 1):
                     return
                 raise OSError("звук остановился: устройство пропало?")
             except Exception as e:
@@ -165,7 +165,7 @@ class StreamOut:
                     raise StreamBroken(str(e)) from e
                 self.reopen()                       # and on from where it stopped
 
-    def _stream(self, samples, rate, state, level, stopped) -> bool:
+    def _stream(self, samples, rate, state, level, stopped, low_latency=False) -> bool:
         """One stream from state["pos"]: True when the line ended or was stopped, False when it stalled."""
         import numpy as np
         sd = self.sd
@@ -188,7 +188,8 @@ class StreamOut:
             if len(chunk) < frames:
                 raise sd.CallbackStop
         stream = sd.OutputStream(device=self.device, samplerate=rate, channels=1, dtype="float32",
-                                 blocksize=self.BLOCK, callback=callback, finished_callback=done.set)
+                                 blocksize=512 if low_latency else self.BLOCK, callback=callback,
+                                 finished_callback=done.set, **({"latency": "low"} if low_latency else {}))
         try:
             stream.start()
             beat["at"] = time.monotonic()          # the first block comes a buffer after the start: no stall before it
@@ -242,7 +243,7 @@ class Player(threading.Thread):
             return 0.0
         return max(0.0, time.monotonic() - self.playing_until)
 
-    def play(self, data: bytes, generation: int | None = None) -> None:
+    def play(self, data: bytes, generation: int | None = None, *, low_latency=False) -> None:
         """Queue a line; one made for an earlier generation (before a stop) is dropped. With
         max_queue lines made and waiting, it waits for room - synthesis ahead of the playing - rather
         than lose a line already made (which lines to drop is decided before they are made:
@@ -254,7 +255,7 @@ class Player(threading.Thread):
             time.sleep(0.05)
         if self.generation != made_for:          # a stop while it waited
             return
-        self.items.put((self.generation, data))
+        self.items.put((self.generation, data, low_latency))
 
     def pause(self) -> bool:
         """Hold the lines (CatQuest speaks): the one being played is cut, to be played again from its
@@ -320,7 +321,7 @@ class Player(threading.Thread):
 
     def _play(self, item) -> None:
         self._wait_running()
-        generation, data = item
+        generation, data, low_latency = item
         if generation != self.generation:
             return
         self.stopped.clear()
@@ -335,7 +336,10 @@ class Player(threading.Thread):
             return
         length = seconds(data)
         self.playing_until = time.monotonic() + length
-        out.play(data, self.level, self.stopped, length)
+        if low_latency:
+            out.play(data, self.level, self.stopped, length, low_latency=True)
+        else:
+            out.play(data, self.level, self.stopped, length)
         self.silent = False
         if self.stopped.is_set():
             self.playing_until = time.monotonic()
