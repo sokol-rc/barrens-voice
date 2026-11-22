@@ -10,11 +10,15 @@ import sys
 import threading
 import time
 import wave
+from contextlib import closing
 
 from . import protocol
 
 TAIL = 0.25   # seconds of silence after each line
 PAUSE_MAX = 90.0   # a pause whose "resume" never came ends by itself
+
+
+_device_refresh = threading.Lock()
 
 
 def wav(pcm: bytes, rate: int, volume: float = 1.0, *, tail: float = TAIL) -> bytes:
@@ -120,6 +124,33 @@ def preferred_output() -> int | None:
     return None
 
 
+def wasapi_output(sd):
+    return next(h["default_output_device"] for h in sd.query_hostapis()
+                if h["name"] == "Windows WASAPI" and h["default_output_device"] >= 0)
+
+
+def prime_output(rate: int) -> None:
+    """Briefly start shared WASAPI before GPU synthesis resumes after silence in foreground WoW."""
+    if not _device_refresh.acquire(blocking=False):
+        return
+    try:
+        import sounddevice as sd
+
+        def silence(out, frames, times, status):
+            out[:] = bytes(len(out))
+
+        stream = sd.RawOutputStream(device=wasapi_output(sd), samplerate=rate, channels=1, dtype="float32",
+                                    blocksize=0, callback=silence,
+                                    extra_settings=sd.WasapiSettings(auto_convert=True))
+        with closing(stream):
+            stream.start()
+            stream.stop()
+    except Exception:  # the shared output is optional for synthesis
+        pass
+    finally:
+        _device_refresh.release()
+
+
 class StreamOut:
     """Plays a line as a stream (PortAudio, through sounddevice): the volume asked is read for every block, so the mouse
     wheel reaches the line playing at once, louder and quieter, 0..2 of it (over 1 the peaks eased, `limit`). Nothing
@@ -173,9 +204,7 @@ class StreamOut:
             kwargs["latency"] = "low"
             if self.preferred is not None and self.preferred == preferred_output():
                 try:
-                    device = next(h["default_output_device"] for h in sd.query_hostapis()
-                                  if h["name"] == "Windows WASAPI" and h["default_output_device"] >= 0)
-                    return sd.OutputStream(device=device, blocksize=0,
+                    return sd.OutputStream(device=wasapi_output(sd), blocksize=0,
                                            extra_settings=sd.WasapiSettings(auto_convert=True), **kwargs)
                 except Exception:  # shared stream unavailable at this format or endpoint
                     pass
@@ -196,7 +225,8 @@ class StreamOut:
                     return
                 if attempt == 2:
                     raise StreamBroken(str(e)) from e
-                self.reopen()                       # and on from where it stopped
+                with _device_refresh:  # PortAudio must not reset an active priming stream
+                    self.reopen()
 
     def _stream(self, samples, rate, state, level, stopped, low_latency=False) -> bool:
         """One stream from state["pos"]: True when the line ended or was stopped, False when it stalled."""

@@ -17,7 +17,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .assign import Assigner
-from .audio import KNEE, TAIL, Player, drain, limit, seconds, wav  # noqa: F401 - KNEE and limit: tests and tools take them here
+from .audio import KNEE, TAIL, Player, drain, limit, prime_output, seconds, wav  # noqa: F401 - KNEE and limit: tests and tools take them here
 from . import gamevoices
 from .intonation import shape
 from .text import Accentor, numbers_to_words
@@ -428,6 +428,9 @@ class F5Speaker:
             from .whisper_onnx import resample
             data, sr_in = sf.read(ref_file, dtype="float32", always_2d=True)
             self.ref_audio[ref_file] = resample(data.mean(axis=1), sr_in, self.onnx.in_rate)
+        if (cache_key is not None and self.config.get("f5_prime_output", True)
+                and self.player is not None and self.player.quiet_for() >= 5.0):
+            prime_output(self.onnx.out_rate)
         for attempt in range(2):
             wav, sr = self.onnx.synth(self.ref_audio[ref_file], ref_text, text, total)
             if (attempt or self.fastest() or self.config.get("f5_end_check") == "off"

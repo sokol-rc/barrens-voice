@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     # longer; "whisper" - made again only if Whisper does not hear the last word (1.5 GB of video memory)
     "f5_end_check": "silence",
     "f5_profile": "quality",
+    "f5_prime_output": True,
     "f5_tensorrt_dir": "",
     # slow voices drawn toward the bank's faster quarter (quantile) by this share, at most this many
     # times faster; each character's own tempo within this share either way (f5engine.line_seconds)

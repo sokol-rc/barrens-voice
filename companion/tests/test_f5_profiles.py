@@ -189,3 +189,34 @@ class Profiles(unittest.TestCase):
         synth("b")
         synth("b")
         self.assertEqual(model.onnx.synth.call_count, 9)
+
+    def test_idle_audio_probe_closes_on_start_failure_and_allows_a_retry(self):
+        sd = mock.Mock()
+        sd.query_hostapis.return_value = [dict(name="Windows WASAPI", default_output_device=7)]
+        stream = sd.RawOutputStream.return_value
+        stream.start.side_effect = [OSError("device removed"), None]
+        with mock.patch.dict(sys.modules, sounddevice=sd):
+            audio.prime_output(24000)
+            audio.prime_output(24000)
+        self.assertEqual(stream.close.call_count, 2)
+        stream.stop.assert_called_once()
+        buffer = bytearray(b"abcd")
+        sd.RawOutputStream.call_args.kwargs["callback"](buffer, 1, None, None)
+        self.assertEqual(buffer, bytes(4))
+
+    def test_only_an_uncached_fast_piece_after_quiet_primes_audio(self):
+        player = mock.Mock()
+        model = f5engine.F5Speaker(dict(DEFAULT_CONFIG, f5_profile="fastest"), lambda *_: None,
+                                   Path("."), player=player)
+        model.onnx = SimpleNamespace(accelerated=True, using_trt=True, out_rate=24000,
+                                     synth=lambda *_: (np.ones(8, np.float32), 24000))
+        model.ref_audio, model.ref_text, model.ref_seconds = {"orc": None}, {"o": "Голос."}, {"o": 1}
+        model.duration = lambda *_: 2
+        slot = SimpleNamespace(path="orc", id="o")
+        player.quiet_for.side_effect = [8, 0]
+        with mock.patch.object(f5engine, "prime_output") as prime:
+            for text in ("Привет!", "Привет!", "Вперёд!"):
+                model._synth(slot, text, 100, "Игрок")
+            model.config["f5_prime_output"] = False
+            model._synth(slot, "Ещё.", 100, "Игрок")
+        prime.assert_called_once_with(24000)
