@@ -25,7 +25,7 @@ DIST = ROOT / "dist"
 sys.path.insert(0, str(ROOT / "companion"))
 from bv import news  # noqa: E402 - news.toml's reading and checks, the companion's own
 
-REPO_URL = "https://github.com/" + os.environ.get("GITHUB_REPOSITORY", "rgeraskin/barrens-voice")
+REPO_URL = "https://github.com/" + os.environ.get("BV_RELEASE_REPO", "rgeraskin/barrens-voice")
 TOC = "addon/BarrensVoice/BarrensVoice.toc"
 INSTALL = "Установка: скачай `BarrensVoice-Setup.exe` и запусти его."
 # the uv the installer ships and the updates bring (the manifest names it: an install with another fetches it)
@@ -77,7 +77,7 @@ def released_tags() -> set[str] | None:
     The repository is public: no token needed, one is used when the environment has it (CI's rate limit)."""
     import urllib.request
     from bv.update import AGENT, REPO
-    repo = os.environ.get("GITHUB_REPOSITORY", REPO)
+    repo = os.environ.get("BV_RELEASE_REPO", REPO)
     RELEASES = f"https://api.github.com/repos/{repo}/releases?per_page=100"
     headers = {"User-Agent": AGENT}
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -372,7 +372,7 @@ def tag_problems(tag: str, read, listing=None) -> list[str]:
 def update_channel(data: bytes) -> bytes:
     """Set the update origin and trusted public key in packaged forks."""
     import base64
-    repo = os.environ.get("GITHUB_REPOSITORY", "rgeraskin/barrens-voice")
+    repo = os.environ.get("BV_RELEASE_REPO", "rgeraskin/barrens-voice")
     if repo == "rgeraskin/barrens-voice":
         return data
     public = os.environ.get("BV_UPDATE_PUBLIC_KEY", "")

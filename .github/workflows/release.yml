@@ -17,6 +17,7 @@ jobs:
       - run: mise run test
       - run: mise run installer      # dist/: archive, manifest.json, notes.md, uv.exe, BarrensVoice-Setup.exe
         env:
+          BV_RELEASE_REPO: ${{ github.repository }}
           BV_UPDATE_PUBLIC_KEY: ${{ vars.BV_UPDATE_PUBLIC_KEY }}
           RELEASE_TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}   # a test build's «Что нового»: which tags have a release (release.released_tags)
