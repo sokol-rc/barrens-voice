@@ -44,6 +44,32 @@ class Profiles(unittest.TestCase):
             self.assertEqual(source.read_bytes(), b"another export")
             self.assertFalse((Path(d) / "cache").exists())
 
+    def test_cuda_decode_load_failure_uses_original_transformer_and_cpu_vocoder(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            vocab = home / "vocab.txt"
+            vocab.write_text("а\n", encoding="utf-8")
+            model = F5Onnx(home, vocab, "CUDAExecutionProvider", log=lambda msg: None, steps=6, cache=home)
+            meta = dict(sample_rate="24000", in_sample_rate="24000", out_sample_rate="24000",
+                        hop_length="256", nfe_step="10", max_signal_length="4096",
+                        model_file_name_preprocess="pre", model_file_name_transformer="net", model_file_name_decode="dec")
+            calls = []
+            def session(path, options=None, providers=None):
+                name = Path(path).name
+                names = [v[0] if isinstance(v, tuple) else v for v in providers]
+                calls.append((name, names[0]))
+                if name == "dec" and names[0] == "CUDAExecutionProvider":
+                    raise RuntimeError("unsupported CUDA operator")
+                return SimpleNamespace(get_modelmeta=lambda: SimpleNamespace(custom_metadata_map=meta),
+                                       get_providers=lambda: names,
+                                       get_inputs=lambda: [SimpleNamespace(type="tensor(float)")])
+            with mock.patch("onnxruntime.InferenceSession", side_effect=session), \
+                    mock.patch.object(f5schedule, "transformer", return_value=home / "reduced"):
+                model.load()
+            self.assertFalse(model.accelerated)
+            self.assertEqual(model.steps, 10)
+            self.assertEqual(calls[-2:], [("net", "CUDAExecutionProvider"), ("dec", "CPUExecutionProvider")])
+
     def test_failed_cuda_inference_retries_same_input_on_quality_once(self):
         model = F5Onnx(Path("."), Path("."), log=lambda msg: None)
         model.loaded = model.accelerated = True
@@ -65,6 +91,18 @@ class Profiles(unittest.TestCase):
         model._cuda.assert_called_once()
         self.assertEqual(model.pre.run.call_count, 2)
         self.assertIs(model._cuda.call_args.args[0], model.pre.run.call_args_list[0].args[1])
+
+    def test_tensorrt_runtime_failure_retries_on_cuda_before_quality(self):
+        model = F5Onnx(Path("."), Path("."), log=lambda msg: None)
+        model.using_trt = model.accelerated = True
+        model._cuda = mock.Mock(side_effect=[RuntimeError("builder failed"), "audio"])
+        model._cuda_transformer = mock.Mock(side_effect=lambda: setattr(model, "using_trt", False))
+        model._quality = mock.Mock()
+        feed = {"text_ids": np.zeros((1, 1), dtype=np.int32)}
+        self.assertEqual(model._infer(feed), "audio")
+        self.assertEqual(model._cuda.call_args_list, [mock.call(feed), mock.call(feed)])
+        model._cuda_transformer.assert_called_once()
+        model._quality.assert_not_called()
 
     def test_first_sentence_plays_before_the_rest_and_stop_drops_the_rest(self):
         for stop, expected in [(False, ["Один.", "play", "Два.", "play"]), (True, ["Один.", "play"])]:
@@ -90,6 +128,14 @@ class Profiles(unittest.TestCase):
             speaker.lines.put(None)
             speaker._synth_loop()
             self.assertEqual(events, expected)
+
+    def test_clause_packet_keeps_its_punctuation_and_questions_stay_whole(self):
+        first = "Подождите у портала,"
+        rest = "пока подойдут остальные участники группы и наш последний целитель."
+        self.assertEqual(f5engine.first_packets(first + " " + rest), [first, rest])
+        question = (first + " " + rest)[:-1] + "?"
+        self.assertEqual(f5engine.first_packets(question), [question])
+        self.assertEqual(f5engine.first_packets("Погоди, скоро буду."), ["Погоди, скоро буду."])
 
     def test_low_latency_stream_can_retry_with_normal_buffers(self):
         output = audio.StreamOut(SimpleNamespace())

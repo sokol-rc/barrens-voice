@@ -59,10 +59,12 @@ DEVICES = {"DmlExecutionProvider": "dml", "CUDAExecutionProvider": "cuda"}
 
 class F5Onnx:
     def __init__(self, model_dir: Path, vocab_path: Path, provider: str = "DmlExecutionProvider", log=print,
-                 *, steps: int | None = None, cache: Path | None = None):
+                 *, steps: int | None = None, cache: Path | None = None, trt_dir: str = ""):
         self.model_dir, self.vocab_path, self.provider, self.log = Path(model_dir), Path(vocab_path), provider, log
         self.fast_steps = steps if provider == "CUDAExecutionProvider" else None
         self.cache = cache
+        self.trt_dir = trt_dir
+        self.using_trt = False
         self.accelerated = False
         self.lock = threading.Lock()
         self.loaded = False
@@ -80,8 +82,7 @@ class F5Onnx:
         self.steps = int(meta["nfe_step"])
         self.max_frames = int(meta["max_signal_length"])
         from .f5engine import card_session, on_card
-        options, card = card_session(self.provider)
-        self.pre = ort.InferenceSession(str(self.model_dir / meta["model_file_name_preprocess"]), options, providers=card)
+        self.pre_path = self.model_dir / meta["model_file_name_preprocess"]
         self.transformer_path = self.model_dir / meta["model_file_name_transformer"]
         self.decode_path = self.model_dir / meta["model_file_name_decode"]
         self.export_steps = self.steps
@@ -89,8 +90,21 @@ class F5Onnx:
             try:
                 from .f5schedule import transformer
                 path = transformer(self.transformer_path, self.cache, self.fast_steps)
-                self.net = ort.InferenceSession(str(path), options, providers=card)
-                on_card(self.net, self.provider)
+                options, _ = card_session(self.provider)
+                card = [(self.provider, {"cudnn_conv1d_pad_to_nc1d": "1", "cudnn_conv_algo_search": "HEURISTIC"}),
+                        "CPUExecutionProvider"]
+                self.pre = ort.InferenceSession(str(self.pre_path), options, providers=card)
+                on_card(self.pre, self.provider)
+                self.reduced_path, self.cuda_providers = path, card
+                if self.trt_dir:
+                    from . import f5trt
+                    try:
+                        self.net = f5trt.session(path, Path(self.trt_dir), options, card, self.max_frames)
+                        self.using_trt = True
+                    except Exception as e:
+                        self.log(f"TensorRT недоступен, включаю CUDA: {e}")
+                if not self.using_trt:
+                    self._cuda_transformer()
                 self.cuda_dec = ort.InferenceSession(str(self.decode_path), options, providers=card)
                 on_card(self.cuda_dec, self.provider)
                 self.steps = self.fast_steps
@@ -110,13 +124,23 @@ class F5Onnx:
         self.loaded = True
         self.log(f"F5 (ONNX, {self.net.get_providers()[0]}) готов: {self.steps} шагов")
 
+    def _cuda_transformer(self):
+        import onnxruntime as ort
+        from .f5engine import card_session, on_card
+        self.using_trt = False
+        self.net = None
+        options, _ = card_session(self.provider)
+        self.net = ort.InferenceSession(str(self.reduced_path), options, providers=self.cuda_providers)
+        on_card(self.net, self.provider)
+
     def _quality(self):
         import onnxruntime as ort
         from .f5engine import card_session, on_card
-        self.accelerated = False
-        self.cuda_dec = self.scratch = self.net = None
+        self.accelerated = self.using_trt = False
+        self.cuda_dec = self.scratch = self.net = self.pre = None
         self.steps = self.export_steps
         options, providers = card_session(self.provider)
+        self.pre = ort.InferenceSession(str(self.pre_path), options, providers=providers)
         self.net = ort.InferenceSession(str(self.transformer_path), options, providers=providers)
         on_card(self.net, self.provider)
 
@@ -143,6 +167,16 @@ class F5Onnx:
         return clean_tail(np.asarray(out, dtype=np.float32).reshape(-1), self.hop, self.out_rate), self.out_rate
 
     def _infer(self, feed):
+        if self.using_trt:
+            try:
+                return self._cuda(feed)
+            except Exception as e:
+                self.log(f"TensorRT не обработал строку, повторяю через CUDA: {e}")
+            try:
+                self._cuda_transformer()
+            except Exception as e:
+                self.log(f"Ускоренный граф CUDA недоступен, включаю quality: {e}")
+                self._quality()
         if self.accelerated:
             try:
                 return self._cuda(feed)

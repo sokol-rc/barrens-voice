@@ -41,6 +41,19 @@ def sentence_groups(text: str) -> list[str]:
         last = question
     return groups or [text]
 
+def first_packets(text: str) -> list[str]:
+    """Speak a complete sentence first. A long statement can start at a clause boundary too.
+    Keep questions whole so that shape() can find their stressed word and final rise."""
+    sentences = SENTENCE_END.split(text, maxsplit=1)
+    if len(sentences) > 1 or text.endswith("?") or len(text.replace("+", "")) < 75:
+        return sentences
+    for gap in re.finditer(r"(?<=[,;:])\s+", text):
+        first, rest = text[:gap.start()], text[gap.end():]
+        if len(first.split()) >= 3 and len(rest.split()) >= 4:
+            return [first, rest]
+    return [text]
+
+
 MODEL_REPO = "Misha24-10/F5-TTS_RUSSIAN"   # the vocabulary; the model itself is our ONNX export of it
 VOCAB_FILE = "F5TTS_v1_Base/vocab.txt"
 # the video card, best first: CUDA (NVIDIA; onnxruntime-gpu) leaves the game alone - DirectML (any DirectX 12
@@ -337,6 +350,8 @@ class F5Speaker:
         quantile = self.config.get("voice_pace_quantile", 0.25)
         self.target_pace = paces[min(len(paces) - 1, int(len(paces) * quantile))] if paces else 0.0
         self._synth(first, "Проверка.", 100)   # warm-up: the first call is slow
+        if self.provider:
+            self.device = f"{self.card} (ONNX Runtime, {self.onnx.steps} шагов)"
         self.log(f"F5-TTS готов на {self.device}")
 
     def _load_onnx(self) -> None:
@@ -362,7 +377,8 @@ class F5Speaker:
 
         from .f5onnx import F5Onnx
         self.onnx = F5Onnx(models, Path(hf_hub_download(MODEL_REPO, VOCAB_FILE)), engine, self.log,
-                           steps=profile_steps(self.config, engine), cache=self.home / "tmp" / "f5-schedules")
+                           steps=profile_steps(self.config, engine), cache=self.home / "tmp" / "f5-schedules",
+                           trt_dir=self.config.get("f5_tensorrt_dir", ""))
         self.onnx.load()
         if self.config.get("f5_end_check") == "whisper" and not self.fastest():
             from .whisper_onnx import OnnxChecker
@@ -371,7 +387,6 @@ class F5Speaker:
         self.ref_audio: dict[str, object] = {}
         self.card = (gpu_name() if engine in ("DmlExecutionProvider", "CUDAExecutionProvider") else "") or engine
         self.provider = engine
-        self.device = f"{self.card} (ONNX Runtime, {self.onnx.steps} шагов)"
 
     def pace(self, slot) -> float:
         """The voice's seconds of speech per byte of its reference's text as F5 gets it - stressed, as
@@ -463,7 +478,7 @@ class F5Speaker:
                 self.log(f"    к синтезу: {text}" + (f"  ({len(groups)} части)" if len(groups) > 1 else ""))
             started = time.perf_counter()
             try:
-                parts = SENTENCE_END.split(text, maxsplit=1) if self.fastest() else [text]
+                parts = first_packets(text) if self.fastest() else [text]
                 duration = 0.0
                 for index, part in enumerate(parts):
                     if generation != self.player.generation:

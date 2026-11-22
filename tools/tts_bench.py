@@ -53,6 +53,12 @@ def run(args, work):
         return sum(v for key, v in values.items() if key.startswith(process_prefix)) / 2**20
 
     config = dict(app.DEFAULT_CONFIG, f5_profile=args.profile)
+    if args.graph_cache:
+        from bv import f5schedule
+        export = f5schedule.transformer
+        f5schedule.transformer = lambda source, cache, steps: export(source, args.graph_cache.resolve(), steps)
+    if args.trt_dir:
+        config["f5_tensorrt_dir"] = str(args.trt_dir)
     if args.provider:
         config["f5_onnx_provider"] = args.provider
     if args.steps:
@@ -85,6 +91,7 @@ def run(args, work):
 
     def stream(**kwargs):
         callback = kwargs.pop("callback")
+        span = []
 
         def observe(out, frames, times, status):
             nonlocal first_block
@@ -94,14 +101,22 @@ def run(args, work):
                     row["underflows"] += 1
                 callback(out, frames, times, status)
             finally:
-                if first_block is None:
+                if first_block is None or args.full_playback:
                     audible = np.flatnonzero(np.abs(out[:, 0]) > 0.001)
                     if len(audible):
-                        first_block = now
-                        row["callback_ms"] = (now - row["received_s"]) * 1000
+                        callback_ms = (now - row["received_s"]) * 1000
+                        if first_block is None:
+                            first_block = now
+                            row["callback_ms"] = callback_ms
                         if times.outputBufferDacTime > 0 and times.currentTime > 0:
-                            row["dac_ms"] = row["callback_ms"] + 1000 * (
-                                times.outputBufferDacTime - times.currentTime + audible[0] / kwargs["samplerate"])
+                            block_ms = callback_ms + 1000 * (times.outputBufferDacTime - times.currentTime)
+                            onset = block_ms + 1000 * audible[0] / kwargs["samplerate"]
+                            row.setdefault("dac_ms", onset)
+                            if args.full_playback:
+                                if not span:
+                                    span.extend((onset, onset))
+                                    row.setdefault("packet_dac_spans_ms", []).append(span)
+                                span[1] = block_ms + 1000 * audible[-1] / kwargs["samplerate"]
                 out.fill(0)  # keep real device timing without speaking the corpus through the user's speakers
         return output_stream(callback=observe, **kwargs)
 
@@ -168,6 +183,8 @@ def run(args, work):
     if getattr(speaker.onnx, "accelerated", False):
         timed(speaker.onnx.cuda_dec, "run_with_iobinding", "decode")
     expect_acceleration = args.profile != "quality" and speaker.provider == "CUDAExecutionProvider"
+    if args.trt_dir and not speaker.onnx.using_trt:
+        raise RuntimeError("Requested TensorRT fell back at startup")
     if expect_acceleration != getattr(speaker.onnx, "accelerated", False):
         raise RuntimeError(f"Unexpected graph for {args.profile} on {speaker.provider}")
 
@@ -178,7 +195,7 @@ def run(args, work):
     corpus = Path(__file__).with_name("tts-corpus.txt").read_bytes()
     header = dict(profile=args.profile, startup_s=clock() - started, gpu=initial_gpu, ort=ort.__version__,
                   device=str(sd.query_devices(output.device)["name"]), provider=speaker.provider,
-                  steps=speaker.onnx.steps, full_playback=args.full_playback, bank_sha256=hashlib.sha256(manifest).hexdigest(),
+                  steps=speaker.onnx.steps, transformer=speaker.onnx.net.get_providers()[0], full_playback=args.full_playback, bank_sha256=hashlib.sha256(manifest).hexdigest(),
                   corpus_sha256=hashlib.sha256(corpus).hexdigest())
     print(json.dumps(header), flush=True)
     pairs = [line.split("|") for line in corpus.decode().splitlines()]
@@ -212,6 +229,8 @@ def run(args, work):
                 args.wav_dir.mkdir(exist_ok=True, parents=True)
                 sf.write(args.wav_dir / f"{i:02}-{col}.wav", samples, sr)
             elapsed = chunks[-1][0] - row["queued_s"]
+            if args.trt_dir and not speaker.onnx.using_trt:
+                raise RuntimeError("TensorRT inference fell back")
             if expect_acceleration and not speaker.onnx.accelerated:
                 raise RuntimeError("Accelerated inference reverted to quality")
             audio_s = len(samples) / sr - audio.TAIL
@@ -233,6 +252,8 @@ if __name__ == "__main__":
     parser.add_argument("--hf", type=Path, required=True)
     parser.add_argument("--pairs", type=int, default=30, choices=range(1, 31))
     parser.add_argument("--profile", choices=("quality", "balanced", "fastest"), default="quality")
+    parser.add_argument("--graph-cache", type=Path, help="retain exported graphs and TensorRT engines between runs")
+    parser.add_argument("--trt-dir", type=Path, help="directory containing the optional TensorRT 10 DLLs")
     parser.add_argument("--provider", choices=("CUDAExecutionProvider", "DmlExecutionProvider"))
     parser.add_argument("--steps", type=int, choices=(4, 5, 6, 8), help="test another complete schedule")
     parser.add_argument("--full-playback", action="store_true", help="submit complete muted streams to the device")
