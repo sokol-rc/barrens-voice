@@ -16,7 +16,7 @@ rem NVIDIA (the game keeps running smoothly; ~1.9 GB more), DirectML on other Di
 .venv\Scripts\python.exe -m pip uninstall -q -y onnxruntime onnxruntime-gpu onnxruntime-directml
 where nvidia-smi >nul 2>&1 && (
     echo NVIDIA found: ONNX Runtime with CUDA...
-    .venv\Scripts\python.exe -m pip install -q "onnxruntime-gpu[cuda,cudnn]==1.32.0" || goto :fail
+    .venv\Scripts\python.exe -m pip install -q "onnxruntime-gpu[cuda,cudnn]==1.32.0" onnx==1.23.2 || goto :fail
 ) || (
     .venv\Scripts\python.exe -m pip install -q --force-reinstall --no-deps onnxruntime-directml==1.24.4 || goto :fail
 )

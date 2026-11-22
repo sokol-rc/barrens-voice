@@ -58,8 +58,12 @@ DEVICES = {"DmlExecutionProvider": "dml", "CUDAExecutionProvider": "cuda"}
 
 
 class F5Onnx:
-    def __init__(self, model_dir: Path, vocab_path: Path, provider: str = "DmlExecutionProvider", log=print):
+    def __init__(self, model_dir: Path, vocab_path: Path, provider: str = "DmlExecutionProvider", log=print,
+                 *, steps: int | None = None, cache: Path | None = None):
         self.model_dir, self.vocab_path, self.provider, self.log = Path(model_dir), Path(vocab_path), provider, log
+        self.fast_steps = steps if provider == "CUDAExecutionProvider" else None
+        self.cache = cache
+        self.accelerated = False
         self.lock = threading.Lock()
         self.loaded = False
 
@@ -77,17 +81,44 @@ class F5Onnx:
         self.max_frames = int(meta["max_signal_length"])
         from .f5engine import card_session, on_card
         options, card = card_session(self.provider)
-        cpu = ["CPUExecutionProvider"]
         self.pre = ort.InferenceSession(str(self.model_dir / meta["model_file_name_preprocess"]), options, providers=card)
-        self.net = ort.InferenceSession(str(self.model_dir / meta["model_file_name_transformer"]), options, providers=card)
-        on_card(self.net, self.provider)
-        self.dec = ort.InferenceSession(str(self.model_dir / meta["model_file_name_decode"]), providers=cpu)
+        self.transformer_path = self.model_dir / meta["model_file_name_transformer"]
+        self.decode_path = self.model_dir / meta["model_file_name_decode"]
+        self.export_steps = self.steps
+        if self.fast_steps:
+            try:
+                from .f5schedule import transformer
+                path = transformer(self.transformer_path, self.cache, self.fast_steps)
+                self.net = ort.InferenceSession(str(path), options, providers=card)
+                on_card(self.net, self.provider)
+                self.cuda_dec = ort.InferenceSession(str(self.decode_path), options, providers=card)
+                on_card(self.cuda_dec, self.provider)
+                self.steps = self.fast_steps
+                self.time_ids = [ort.OrtValue.ortvalue_from_numpy(np.array([i], np.int32)) for i in range(self.steps)]
+                self.scratch = None
+                self.verify_decode = True
+                self.accelerated = True
+            except Exception as e:
+                self.log(f"Ускорение F5 недоступно, включаю quality: {e}")
+        if not self.accelerated:
+            self._quality()
+        self.dec = ort.InferenceSession(str(self.decode_path), providers=["CPUExecutionProvider"])
         types = {"tensor(float)": np.float32, "tensor(float16)": np.float16, "tensor(int16)": np.int16}
         self.audio_type = types[self.pre.get_inputs()[0].type]
         self.vocab = read_vocab(self.vocab_path)
         self.device = DEVICES.get(self.provider, "cpu")     # where IO binding keeps the noise between steps
         self.loaded = True
         self.log(f"F5 (ONNX, {self.net.get_providers()[0]}) готов: {self.steps} шагов")
+
+    def _quality(self):
+        import onnxruntime as ort
+        from .f5engine import card_session, on_card
+        self.accelerated = False
+        self.cuda_dec = self.scratch = self.net = None
+        self.steps = self.export_steps
+        options, providers = card_session(self.provider)
+        self.net = ort.InferenceSession(str(self.transformer_path), options, providers=providers)
+        on_card(self.net, self.provider)
 
     def frames(self, seconds: float) -> int:
         return int(seconds * self.sample_rate / self.hop)
@@ -102,18 +133,57 @@ class F5Onnx:
         if self.audio_type == np.int16:
             audio = np.clip(ref_audio * 32767, -32768, 32767).astype(np.int16)
         else:
-            audio = ref_audio.astype(self.audio_type)
+            audio = ref_audio.astype(self.audio_type, copy=False)
         ref_frames = int(len(ref_audio) * self.sample_rate / self.in_rate) // self.hop
         duration = max(ids.shape[1], ref_frames + 1) + 1
         duration = min(max(duration, self.frames(total_seconds)), self.max_frames)
         with self.lock:
-            noise, cos, sin, cond, cond_drop, ref_len, rms, tail = self.pre.run(None, {
-                "audio": audio.reshape(1, 1, -1), "text_ids": ids, "max_duration": np.array([duration], np.int64)})
-            fixed = {"rope_cos": cos, "rope_sin": sin, "cat_mel_text": cond, "cat_mel_text_drop": cond_drop}
-            noise = self._denoise(noise, fixed)
-            out = self.dec.run(None, {"denoised": noise, "ref_signal_len": ref_len, "rms_scale": rms,
-                                      "ref_mel_tail": tail})[0]
+            feed = {"audio": audio.reshape(1, 1, -1), "text_ids": ids, "max_duration": np.array([duration], np.int64)}
+            if self.accelerated:
+                try:
+                    out = self._cuda(feed)
+                except Exception as e:
+                    self.log(f"Ускоренный синтез не удался, повторяю в quality: {e}")
+                    self._quality()
+            if not self.accelerated:
+                noise, cos, sin, cond, cond_drop, ref_len, rms, tail = self.pre.run(None, feed)
+                fixed = {"rope_cos": cos, "rope_sin": sin, "cat_mel_text": cond, "cat_mel_text_drop": cond_drop}
+                noise = self._denoise(noise, fixed)
+                out = self.dec.run(None, {"denoised": noise, "ref_signal_len": ref_len, "rms_scale": rms,
+                                          "ref_mel_tail": tail})[0]
         return clean_tail(np.asarray(out, dtype=np.float32).reshape(-1), self.hop, self.out_rate), self.out_rate
+
+    def _cuda(self, feed):
+        import onnxruntime as ort
+        binding = self.pre.io_binding()
+        for name, value in feed.items():
+            binding.bind_cpu_input(name, value)
+        for output in self.pre.get_outputs():
+            binding.bind_output(output.name, "cuda")
+        self.pre.run_with_iobinding(binding)
+        noise, cos, sin, cond, drop, ref_len, rms, tail = binding.get_outputs()
+        if self.scratch is None or self.scratch.shape() != noise.shape():
+            self.scratch = ort.OrtValue.ortvalue_from_shape_and_type(noise.shape(), np.float16, "cuda", 0)
+        fixed = {"rope_cos": cos, "rope_sin": sin, "cat_mel_text": cond, "cat_mel_text_drop": drop}
+        denoised = self._bound_steps((noise, self.scratch), fixed, self.time_ids)
+        inputs = {"denoised": denoised, "ref_signal_len": ref_len, "rms_scale": rms, "ref_mel_tail": tail}
+        b = self.cuda_dec.io_binding()
+        for name, value in inputs.items():
+            b.bind_ortvalue_input(name, value)
+        b.bind_output(self.cuda_dec.get_outputs()[0].name, "cpu")
+        self.cuda_dec.run_with_iobinding(b)
+        out = b.get_outputs()[0].numpy()
+        # The exported vocoder can leave a full-scale click in its final two frames even on silence.
+        speech = out.reshape(-1)[:max(0, out.size - TAIL_FRAMES * self.hop)]
+        if not speech.size or not np.isfinite(out).all() or np.max(np.abs(speech)) < 1e-5:
+            raise ValueError("CUDA Decode вернул тишину или неверные значения")
+        if self.verify_decode:
+            reference = self.dec.run(None, {k: v.numpy() for k, v in inputs.items()})[0]
+            if (not np.isfinite(reference).all() or out.shape != reference.shape
+                    or np.linalg.norm(out - reference) > 0.05 * np.linalg.norm(reference)):
+                raise ValueError("результат CUDA Decode расходится с CPU")
+            self.verify_decode = False
+        return out
 
     def _denoise(self, noise: np.ndarray, fixed: dict) -> np.ndarray:
         """The denoising steps. On the card the conditions go there once and the noise stays there,
@@ -128,6 +198,9 @@ class F5Onnx:
         buffers = (ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(noise), self.device, 0),
                    ort.OrtValue.ortvalue_from_shape_and_type(noise.shape, noise.dtype, self.device, 0))
         steps = [ort.OrtValue.ortvalue_from_numpy(np.array([s], np.int32)) for s in range(self.steps)]
+        return self._bound_steps(buffers, on_card, steps).numpy()
+
+    def _bound_steps(self, buffers, on_card, steps):
         bindings = []
         for i in range(2):
             b = self.net.io_binding()
@@ -140,4 +213,4 @@ class F5Onnx:
             b = bindings[step & 1]
             b.bind_ortvalue_input("time_step", steps[step])
             self.net.run_with_iobinding(b)
-        return buffers[self.steps & 1].numpy()
+        return buffers[self.steps & 1]
