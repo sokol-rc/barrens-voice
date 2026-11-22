@@ -3,11 +3,8 @@ import dataclasses
 import time
 
 
-def button_lines(config, button, place, count):
-    import win32api
-    import win32con
-    import win32gui
-    from bv import capture, locate, protocol, window
+def open_capture(config, place):
+    from bv import capture, locate, window
 
     window.make_dpi_aware()
     cap = capture.Capturer(config, lambda *_: None)
@@ -19,6 +16,34 @@ def button_lines(config, button, place, count):
     found = cap.find()
     if not found or not cap.wgc:
         raise RuntimeError("A visible WoW client with Windows Graphics Capture is required")
+    return cap
+
+
+def foreground_corpus(config, place, lines):
+    import win32gui
+
+    cap = open_capture(config, place)
+    hwnd = cap.window[0]
+    try:
+        for i, col, line, source in lines:
+            time.sleep(1.4 if i < 0 else .4)
+            if win32gui.GetForegroundWindow() != hwnd:
+                raise RuntimeError("WoW lost focus before synthesis")
+            yield i, col, line, source
+            if win32gui.GetForegroundWindow() != hwnd:
+                raise RuntimeError("WoW lost focus during synthesis")
+    finally:
+        cap.wgc.stop()
+
+
+def button_lines(config, button, place, count):
+    import win32api
+    import win32con
+    import win32gui
+    from bv import protocol, window
+
+    cap = open_capture(config, place)
+    found = cap.window
     hwnd, (left, top, width, height) = found
     x, y = button
     # One snapshot is published by the WGC thread. The main thread reads it while polling at

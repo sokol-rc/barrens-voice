@@ -125,8 +125,8 @@ class StreamOut:
     wheel reaches the line playing at once, louder and quieter, 0..2 of it (over 1 the peaks eased, `limit`). Nothing
     is set in Windows: the line itself is multiplied.
 
-    The device is Windows' sound mapper (MME's first output, «Microsoft Sound Mapper» / «Переназначение звуковых
-    устройств»), the one winsound played through before the stream: it follows Windows' default output, headphones plugged in or out.
+    Ordinary playback uses Windows' sound mapper (MME's first output), which follows the default output.
+    Low-latency playback first tries shared WASAPI while the preferred output matches the device snapshot.
     PortAudio reads its list of devices once, so when a stream fails or stalls (the device gone) the list is read
     again and the line goes on from where it stopped; only a second failure is the caller's (Player: said, the next
     line tries again)."""

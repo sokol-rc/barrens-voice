@@ -218,16 +218,21 @@ def run(args, work):
     print(json.dumps(header), flush=True)
     pairs = [line.split("|") for line in corpus.decode().splitlines()]
     cast = [("Громмаш", "Orc", "2"), ("Джайна", "Human", "3"), ("Брэнн", "Dwarf", "2")]
+
     def corpus_lines():
-        for i, pair in [(-1, ["Проверка связи."]), *enumerate(pairs[:args.pairs])]:
+        cold = "Пора отправляться в путь." if args.wow_corpus else "Проверка связи."
+        for i, pair in [(-1, [cold]), *enumerate(pairs[:args.pairs])]:
             for col, raw in enumerate(pair):
-                sender, race, sex = cast[(i + col) % len(cast)]
+                sender, race, sex = cast[0 if args.wow_corpus and i < 0 else (i + col) % len(cast)]
                 yield i, col, Line("say", sender, race, sex, "", "", raw, voice="f5",
                                    options={"id": f"{i}-{col}"}), {}
 
     if args.wow_button:
         from tts_wow import button_lines
         cases = button_lines(config, args.wow_button, args.wow_place, args.wow_count)
+    elif args.wow_corpus:
+        from tts_wow import foreground_corpus
+        cases = foreground_corpus(config, args.wow_place, corpus_lines())
     else:
         cases = corpus_lines()
     with closing(cases):
@@ -295,8 +300,11 @@ if __name__ == "__main__":
     parser.add_argument("--full-playback", action="store_true", help="submit complete muted streams to the device")
     parser.add_argument("--sample-vram", action="store_true", help="sample dedicated memory every 100 ms, including startup")
     parser.add_argument("--wav-dir", type=Path)
-    parser.add_argument("--wow-button", nargs=2, type=int, metavar=("X", "Y"),
-                        help="click the local addon test button at these WoW client pixel coordinates")
+    live = parser.add_mutually_exclusive_group()
+    live.add_argument("--wow-corpus", action="store_true",
+                      help="replay the paired corpus while capturing the foreground WoW client")
+    live.add_argument("--wow-button", nargs=2, type=int, metavar=("X", "Y"),
+                      help="click the local addon test button at these WoW client pixel coordinates")
     parser.add_argument("--wow-place", help="strip geometry from the installed data/tmp/strip.json")
     parser.add_argument("--wow-count", type=int, choices=range(1, 31), default=3)
     with tempfile.TemporaryDirectory() as tmp:
