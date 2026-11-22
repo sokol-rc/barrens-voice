@@ -77,3 +77,11 @@ run = "uv run --locked --extra cuda python tools/tts_bench.py"
 [tasks.tts-score]
 description = "Check benchmark recordings with the companion's Whisper model"
 run = "uv run --locked --extra cuda python tools/tts_score.py"
+
+[tasks.tts-summary]
+description = "Show p50 and p95 for comparable complete TTS runs"
+run = "uv run --locked python tools/tts_summary.py"
+
+[tasks.tts-frames]
+description = "Measure a separate 60 Hz GPU workload while the companion synthesizes"
+run = "uv run --locked --extra cuda python tools/tts_frames.py"

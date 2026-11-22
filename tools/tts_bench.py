@@ -217,6 +217,7 @@ def run(args, work):
             audio_s = len(samples) / sr - audio.TAIL
             row.update(process_vram_mib=dedicated_mib(), text_ms=sum(stages["text"]),
                        stages=dict(stages), audio_s=audio_s, rtf=elapsed / audio_s,
+                       total_rtf=(chunks[-1][0] - row["received_s"]) / audio_s,
                        rss_peak_mib=win32process.GetProcessMemoryInfo(win32api.GetCurrentProcess())["PeakWorkingSetSize"]/2**20,
                        gpu_used_mib=int(gpu()[2]), chunks=len(chunks),
                        ready_ms=[(t-row["received_s"])*1000 for t, _ in chunks])
