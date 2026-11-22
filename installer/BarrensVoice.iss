@@ -6,14 +6,17 @@
 #ifndef AppVersion
   #error Pass /DAppVersion=<version> (tools/installer.py does)
 #endif
+#ifndef ReleaseRepo
+  #define ReleaseRepo "rgeraskin/barrens-voice"
+#endif
 
 [Setup]
 AppId={{6F2E1C55-3B8D-4E57-9C61-0B6E2A7D4F19}
 AppName=Barrens Voice
 AppVersion={#AppVersion}
 AppPublisher=rgeraskin
-AppPublisherURL=https://github.com/rgeraskin/barrens-voice
-AppSupportURL=https://github.com/rgeraskin/barrens-voice/issues
+AppPublisherURL=https://github.com/{#ReleaseRepo}
+AppSupportURL=https://github.com/{#ReleaseRepo}/issues
 DefaultDirName={localappdata}\BarrensVoice
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -28,6 +31,7 @@ OutputBaseFilename=BarrensVoice-Setup
 SetupIconFile=..\companion\bv\launcher\icon.ico
 UninstallDisplayIcon={app}\Barrens Voice.exe
 UninstallDisplayName=Barrens Voice
+Uninstallable=not IsStaging
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -46,6 +50,7 @@ ru.SelectDirLabel3=Barrens Voice установится в эту папку в�
 
 [Tasks]
 Name: "desktopicon"; Description: "Значок на рабочем столе"
+Name: "tensorrt"; Description: "Скачать TensorRT для быстрых профилей на NVIDIA (1,8 ГиБ)"; Flags: unchecked
 
 [Files]
 Source: "..\dist\uv.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -57,14 +62,15 @@ Source: "..\dist\barrens-voice-{#AppVersion}.zip"; DestDir: "{app}\setup"; Flags
 [Run]
 ; Python and the libraries: uv's own Python runs install.py, which builds app\{#AppVersion} from its uv.lock.
 ; set "VAR=value": the folder quoted, so a "&" in it does not end the command
-Filename: "{cmd}"; Parameters: "/c ""set ""UV_PYTHON_INSTALL_DIR={app}\python""&& set ""UV_CACHE_DIR={app}\cache\uv""&& set ""UV_PYTHON_PREFERENCE=only-managed""&& ""{app}\uv.exe"" run --no-project --python 3.13 ""{app}\setup\install.py"" --root ""{app}"" --archive ""{app}\setup\barrens-voice-{#AppVersion}.zip"" || pause"""; StatusMsg: "Скачиваю Python и библиотеки (0,6–2,5 ГБ, несколько минут)…"; Flags: waituntilterminated
+Filename: "{cmd}"; Parameters: "/c ""set ""UV_PYTHON_INSTALL_DIR={app}\python""&& set ""UV_CACHE_DIR={app}\cache\uv""&& set ""UV_PYTHON_PREFERENCE=only-managed""&& ""{app}\uv.exe"" run --no-project --python 3.13 ""{app}\setup\install.py"" --root ""{app}"" --archive ""{app}\setup\barrens-voice-{#AppVersion}.zip"" """; StatusMsg: "Скачиваю Python и библиотеки (0,6–2,5 ГБ, несколько минут)…"; Flags: waituntilterminated
 ; the models now, not at the first start (~3 GB once)
 Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --fetch-models"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Скачиваю модели голосов (около 3 ГБ)…"; Flags: waituntilterminated
+Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv.trt_runtime"; WorkingDir: "{app}\app\current\companion"; Tasks: tensorrt; StatusMsg: "Скачиваю библиотеки TensorRT…"; Flags: waituntilterminated
 Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Description: "Запустить Barrens Voice Launcher"; Flags: postinstall nowait skipifsilent
 
 [Icons]
-Name: "{userprograms}\Barrens Voice"; Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"
-Name: "{userdesktop}\Barrens Voice"; Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userprograms}\Barrens Voice"; Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Check: not IsStaging
+Name: "{userdesktop}\Barrens Voice"; Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Tasks: desktopicon; Check: not IsStaging
 
 [Registry]
 ; the launcher's «Запускать при входе в Windows» writes this value: gone with the program
@@ -85,6 +91,11 @@ Type: filesandordirs; Name: "{app}\setup"
 Type: files; Name: "{app}\barrens-voice.install"
 
 [Code]
+function IsStaging: Boolean;
+begin
+  Result := ExpandConstant('{param:STAGING|0}') = '1';
+end;
+
 { the install folder inside PowerShell's single quotes: a ' in it doubled }
 function AppForPowerShell(Param: String): String;
 begin

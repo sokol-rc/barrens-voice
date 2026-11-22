@@ -47,7 +47,11 @@ def load_key() -> Ed25519PrivateKey:
 
 
 def sign(manifest: Path) -> Path:
-    signature = load_key().sign(manifest.read_bytes())
+    key = load_key()
+    public = os.environ.get("BV_UPDATE_PUBLIC_KEY")
+    if public and key.public_key().public_bytes(RAW, serialization.PublicFormat.Raw) != base64.b64decode(public, validate=True):
+        sys.exit("BV_SIGNING_KEY is not the private key for BV_UPDATE_PUBLIC_KEY")
+    signature = key.sign(manifest.read_bytes())
     out = manifest.with_name(manifest.name + ".sig")
     out.write_text(base64.b64encode(signature).decode() + "\n", encoding="ascii")
     print(f"{out.relative_to(ROOT)}: signed")

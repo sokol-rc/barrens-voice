@@ -981,7 +981,7 @@ class App:
         if self.settings_win is not None and self.settings_win.winfo_exists():
             self.settings_win.lift()
             return
-        width, height = 600, 736
+        width, height = 600, 840
         win, c, p = self._child("Настройки", width, height)
         self.settings_win = win
         cfg = model.read_config()
@@ -1009,13 +1009,26 @@ class App:
                         boxes[k].var.set(os.path.normpath(got))
                 p.button(width - 120, y + 13, width - 30, y + 39, "Выбрать…", f"pick{key}", choose)
             y += 66
-        flags = {"details": bool(cfg.get("log_details")), "whisper": cfg.get("f5_end_check") == "whisper",
+        profiles = {"quality": "Качество", "balanced": "Баланс", "fastest": "Минимальная задержка"}
+        requested_profile = cfg.get("f5_profile")
+        profile = tk.StringVar(win, requested_profile if requested_profile in tuple(profiles) else "quality")
+        c.create_text(30, y + 3, text="Профиль голосов рас", anchor="w", fill=PARCHMENT, font=p.body)
+        for x, (key, label) in zip((30, 170, 290), profiles.items()):
+            choice = tk.Radiobutton(c, text=label, variable=profile, value=key, takefocus=True,
+                                    bg="#211309", fg=PARCHMENT, selectcolor="#120a05",
+                                    activebackground="#211309", activeforeground=GOLD, font=c.font(p.body),
+                                    highlightthickness=0)
+            c.create_window(x, y + 29, anchor="w", window=choice)
+        y += 58
+        flags = {"trt": bool(cfg.get("f5_tensorrt")), "details": bool(cfg.get("log_details")), "whisper": cfg.get("f5_end_check") == "whisper",
                  "auto": cfg.get("auto_update", True) is not False, "beta": cfg.get("update_channel") == "beta"}
 
         def draw_check(key, y, label):
             c.delete(key)
             p.check(30, y, label, flags[key], key,
                     lambda: (flags.__setitem__(key, not flags[key]), draw_check(key, y, label)))
+        draw_check("trt", y + 6, "TensorRT для NVIDIA в быстрых профилях (скачает 1,8 ГиБ)")
+        y += 38
         draw_check("details", y + 6, "Подробный журнал: как строка написана и как прочитана")
         draw_check("whisper", y + 44, "Проверять концовки фраз распознаванием речи (Whisper)")
         c.create_text(56, y + 64, anchor="nw", fill=DIM, font=p.small, width=width - 86,
@@ -1056,6 +1069,7 @@ class App:
                     game_dirs.pop(game, None)
             changes["game_dirs"] = game_dirs
             changes.update(log_keep_days=days, log_details=flags["details"],
+                           f5_profile=profile.get(), f5_tensorrt=flags["trt"],
                            auto_update=flags["auto"], update_channel="beta" if flags["beta"] else "stable")
             if flags["whisper"] != (cfg.get("f5_end_check") == "whisper"):
                 changes["f5_end_check"] = "whisper" if flags["whisper"] else "silence"

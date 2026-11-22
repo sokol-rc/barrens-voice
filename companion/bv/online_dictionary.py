@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import update
 
+DICTIONARY_KEY = "6X3H4Ucf9JQriY67zjH+PABhyztH1VJyWXvuRMPOw3M="
 URL = "https://raw.githubusercontent.com/rgeraskin/barrens-voice/dictionary/"
 FILE = "dictionary.json"
 FORMAT = 2       # 2: a replacement may start with «!» (not declined): a companion before it would read «!ск+ачки»
@@ -72,7 +73,7 @@ def regexes_ok(text: str, timeout: float = CHECK_TIMEOUT) -> str | None:
     return None
 
 
-def signed(raw: bytes, signature: str, public: str = update.PUBLIC_KEY) -> tuple[dict | None, str]:
+def signed(raw: bytes, signature: str, public: str = DICTIONARY_KEY) -> tuple[dict | None, str]:
     """(the dictionary, "") when `raw` is signed and of this companion's format - its regexes not checked
     yet; else (None, why not)."""
     if not update.verify(raw, signature, public):
@@ -91,7 +92,7 @@ def signed(raw: bytes, signature: str, public: str = update.PUBLIC_KEY) -> tuple
     return data, ""
 
 
-def load(raw: bytes, signature: str, public: str = update.PUBLIC_KEY, check=regexes_ok) -> tuple[dict | None, str]:
+def load(raw: bytes, signature: str, public: str = DICTIONARY_KEY, check=regexes_ok) -> tuple[dict | None, str]:
     """(the dictionary, "") when `raw` is one this companion may use, else (None, why not)."""
     data, why = signed(raw, signature, public)
     if data is None:
@@ -125,7 +126,7 @@ class Online:
     """The dictionary online for one companion: the cached copy, the hourly fetch on a thread of its own, and
     `take()` for the main loop - the newer dictionary when one came (applied there, between chat lines)."""
 
-    def __init__(self, folder: Path, log, fetch=update.get, public: str = update.PUBLIC_KEY, check=regexes_ok):
+    def __init__(self, folder: Path, log, fetch=update.get, public: str = DICTIONARY_KEY, check=regexes_ok):
         self.folder, self.log = Path(folder), log
         self.fetch, self.public, self.check = fetch, public, check
         self.current: dict | None = None

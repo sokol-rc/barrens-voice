@@ -1,7 +1,7 @@
 ## Interface: 16001, 120105
 ## Title: Barrens Voice
 ## Notes: Озвучка чата: у каждого игрока свой голос — голоса рас или голоса Windows. Строки передаются Barrens Voice Launcher тонкой тёмной полоской у края экрана.
-## Version: 0.4.1b1
+## Version: 0.4.1
 ## SavedVariables: BarrensVoiceDB
 ## Category: Accessibility
 ## IconTexture: Interface\AddOns\BarrensVoice\Icon

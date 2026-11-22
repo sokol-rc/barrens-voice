@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     "f5_profile": "quality",
     "f5_prime_output": True,
     "f5_tensorrt_dir": "",
+    "f5_tensorrt": False,
     # slow voices drawn toward the bank's faster quarter (quantile) by this share, at most this many
     # times faster; each character's own tempo within this share either way (f5engine.line_seconds)
     "voice_pace_quantile": 0.25,

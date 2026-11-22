@@ -81,10 +81,21 @@ class Engines:
             if missing and self.on_models_missing:      # a video card's failure is no reason to go online
                 self.on_models_missing(error)
         else:
-            state.report(voices="ready", device=getattr(speaker, "card", ""), provider=getattr(speaker, "provider", ""))
+            self.report_ready(speaker)
             self.notice("Голоса рас готовы.")
             if self.on_ready:
                 self.on_ready()
+
+    @staticmethod
+    def report_ready(speaker) -> None:
+        graph = getattr(speaker, "onnx", None)
+        provider = getattr(speaker, "provider", "")
+        if getattr(graph, "using_trt", False):
+            provider = "TensorRT"
+        elif provider:
+            provider = provider.removesuffix("ExecutionProvider").replace("Dml", "DirectML")
+        state.report(voices="ready", device=getattr(speaker, "card", ""), provider=provider,
+                     f5_steps=getattr(graph, "steps", None))
 
     def _unload(self) -> None:
         with self.lock:

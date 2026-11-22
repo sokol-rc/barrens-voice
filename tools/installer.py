@@ -69,7 +69,9 @@ def main() -> int:
     iscc = next((p for p in ISCC if p and Path(p).is_file()), None)
     if iscc is None:
         sys.exit("Inno Setup 6 (ISCC.exe) not found: install it or set INNO_ISCC")
-    subprocess.run([iscc, f"/DAppVersion={version}", str(ROOT / "installer" / "BarrensVoice.iss")], check=True)
+    repo = os.environ.get("GITHUB_REPOSITORY", "rgeraskin/barrens-voice")
+    subprocess.run([iscc, f"/DAppVersion={version}", f"/DReleaseRepo={repo}",
+                    str(ROOT / "installer" / "BarrensVoice.iss")], check=True)
     print(f"dist/BarrensVoice-Setup.exe ({version})")
     return 0
 

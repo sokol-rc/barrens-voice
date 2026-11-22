@@ -380,9 +380,19 @@ class F5Speaker:
         from huggingface_hub import hf_hub_download
 
         from .f5onnx import F5Onnx
+        steps = profile_steps(self.config, engine)
+        trt_dir = self.config.get("f5_tensorrt_dir", "")
+        if steps and self.config.get("f5_tensorrt") and not trt_dir:
+            from . import state, trt_runtime
+            state.report(voices="tensorrt")
+            try:
+                trt_dir = str(trt_runtime.runtime(log=self.log))
+            except Exception as e:
+                self.log(f"TensorRT не подготовлен, запускаю CUDA: {e}")
+            finally:
+                state.report(voices="loading")
         self.onnx = F5Onnx(models, Path(hf_hub_download(MODEL_REPO, VOCAB_FILE)), engine, self.log,
-                           steps=profile_steps(self.config, engine), cache=self.home / "tmp" / "f5-schedules",
-                           trt_dir=self.config.get("f5_tensorrt_dir", ""))
+                           steps=steps, cache=self.home / "tmp" / "f5-schedules", trt_dir=trt_dir)
         self.onnx.load()
         if self.config.get("f5_end_check") == "whisper" and not self.fastest():
             from .whisper_onnx import OnnxChecker

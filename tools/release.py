@@ -76,7 +76,9 @@ def released_tags() -> set[str] | None:
     """The tags that have a GitHub release (a tag whose build failed has none), or None when GitHub does not answer.
     The repository is public: no token needed, one is used when the environment has it (CI's rate limit)."""
     import urllib.request
-    from bv.update import AGENT, RELEASES
+    from bv.update import AGENT, REPO
+    repo = os.environ.get("GITHUB_REPOSITORY", REPO)
+    RELEASES = f"https://api.github.com/repos/{repo}/releases?per_page=100"
     headers = {"User-Agent": AGENT}
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
@@ -367,6 +369,22 @@ def tag_problems(tag: str, read, listing=None) -> list[str]:
     return release_problems(tag, base, addon.group(1) if addon else "?", entries, read("CHANGELOG.md"), updater, copies)
 
 
+def update_channel(data: bytes) -> bytes:
+    """Set the update origin and trusted public key in packaged forks."""
+    import base64
+    repo = os.environ.get("GITHUB_REPOSITORY", "rgeraskin/barrens-voice")
+    if repo == "rgeraskin/barrens-voice":
+        return data
+    public = os.environ.get("BV_UPDATE_PUBLIC_KEY", "")
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or len(base64.b64decode(public, validate=True)) != 32:
+        raise ValueError("Set BV_UPDATE_PUBLIC_KEY to the fork's Ed25519 public key")
+    for name, value in (("REPO", repo), ("PUBLIC_KEY", public)):
+        data, count = re.subn(fr'(?m)^{name} = "[^"]*"$'.encode(), f'{name} = "{value}"'.encode(), data)
+        if count != 1:
+            raise ValueError(f"Expected one {name} assignment in packaged update.py")
+    return data
+
+
 def build() -> Path:
     info = versions()
     base = info["version"]
@@ -410,6 +428,8 @@ def build() -> Path:
                 data = re.sub(rb'(?m)^version = "[^"]*"', f'version = "{info["version"]}"'.encode(), data, count=1)
             if name == news.SOURCE and own_news is not None:               # with the test build's own entry
                 data = own_news.encode("utf-8")
+            if name == "companion/bv/update.py":
+                data = update_channel(data)
             if name == DICTIONARY:                                         # which default this is (the dictionary online)
                 data = stamp_dictionary(data, dictionary_revision())
             if name == TOC:                                                # a test build's: not the sites'

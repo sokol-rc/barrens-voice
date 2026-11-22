@@ -302,10 +302,14 @@ def describe(state: dict, running: bool, exit_code: int | None, game: str | None
     second = (GREEN, f"{game} запущена") if game else (GREY, "Игра не запущена")
 
     voices = state.get("voices") if running else None
+    engine = state.get("provider", "")
+    if state.get("f5_steps"):
+        engine += f" · {state['f5_steps']} шагов"
     third = {
         "bank": (YELLOW, "Голоса рас: собираю банк из файлов игры…"),
         "loading": (YELLOW, "Голоса рас загружаются…"),
-        "ready": (GREEN, "Голоса рас готовы" + (f" — {state['device']}" if state.get("device") else "")),
+        "tensorrt": (YELLOW, "Голоса рас: подготовка библиотек TensorRT…"),
+        "ready": (GREEN, "Голоса рас готовы" + (f" — {engine}" if engine else (f" — {state['device']}" if state.get("device") else ""))),
         "error": (RED, "Голоса рас недоступны — читаю голосами Windows"),
         "off": (GREY, "Голоса рас выключены: в аддоне выбраны голоса Windows"),
     }.get(voices, (GREY, "Голоса рас: ещё не загружены"))
