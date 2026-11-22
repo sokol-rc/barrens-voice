@@ -46,11 +46,22 @@ def run(args, work):
     mem_query = pdh.OpenQuery()
     dedicated = pdh.AddEnglishCounter(mem_query, r"\GPU Process Memory(*)\Dedicated Usage", 0)
     process_prefix = f"pid_{os.getpid()}_"
+    memory_lock = threading.Lock()
 
     def dedicated_mib():
-        pdh.CollectQueryData(mem_query)
-        values = pdh.GetFormattedCounterArray(dedicated, pdh.PDH_FMT_LARGE)
+        with memory_lock:
+            pdh.CollectQueryData(mem_query)
+            values = pdh.GetFormattedCounterArray(dedicated, pdh.PDH_FMT_LARGE)
         return sum(v for key, v in values.items() if key.startswith(process_prefix)) / 2**20
+
+    vram_peak = 0
+    finished = threading.Event()
+    if args.sample_vram:
+        def monitor():
+            nonlocal vram_peak
+            while not finished.wait(.1):
+                vram_peak = max(vram_peak, dedicated_mib())
+        threading.Thread(target=monitor, name="vram-sampler", daemon=True).start()
 
     config = dict(app.DEFAULT_CONFIG, f5_profile=args.profile)
     if args.graph_cache:
@@ -197,6 +208,8 @@ def run(args, work):
                   device=str(sd.query_devices(output.device)["name"]), provider=speaker.provider,
                   steps=speaker.onnx.steps, transformer=speaker.onnx.net.get_providers()[0], full_playback=args.full_playback, bank_sha256=hashlib.sha256(manifest).hexdigest(),
                   corpus_sha256=hashlib.sha256(corpus).hexdigest())
+    if args.sample_vram:
+        header["startup_vram_peak_mib"] = vram_peak
     print(json.dumps(header), flush=True)
     pairs = [line.split("|") for line in corpus.decode().splitlines()]
     cast = [("Громмаш", "Orc", "2"), ("Джайна", "Human", "3"), ("Брэнн", "Dwarf", "2")]
@@ -242,7 +255,10 @@ def run(args, work):
                        ready_ms=[(t-row["received_s"])*1000 for t, _ in chunks])
             if i < 0 and "dac_ms" in row:
                 row["start_to_dac_ms"] = (row["received_s"] - started)*1000 + row["dac_ms"]
+            if args.sample_vram:
+                row["sampled_vram_peak_mib"] = vram_peak
             print(json.dumps(row, ensure_ascii=False), flush=True)
+    finished.set()
     speaker.shutdown()
 
 
@@ -257,6 +273,7 @@ if __name__ == "__main__":
     parser.add_argument("--provider", choices=("CUDAExecutionProvider", "DmlExecutionProvider"))
     parser.add_argument("--steps", type=int, choices=(4, 5, 6, 8), help="test another complete schedule")
     parser.add_argument("--full-playback", action="store_true", help="submit complete muted streams to the device")
+    parser.add_argument("--sample-vram", action="store_true", help="sample dedicated memory every 100 ms, including startup")
     parser.add_argument("--wav-dir", type=Path)
     with tempfile.TemporaryDirectory() as tmp:
         run(parser.parse_args(), Path(tmp))

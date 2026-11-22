@@ -3,3 +3,5 @@
 .githooks/* text eol=lf
 # cmd.exe wants CRLF in a batch file: kept as committed (CRLF), never converted
 *.cmd -text
+# Corpus identity is verified across Windows and Unix checkouts.
+tools/tts-corpus.txt text eol=lf
