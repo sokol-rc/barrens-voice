@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Faster first speech for NVIDIA race voices
+
+  Select `balanced` or `fastest` with `f5_profile` in `config.json`. The fastest profile plays the first sentence while F5 renders the rest. An optional TensorRT installation can shorten generation further. Existing configurations use `quality`.
+
 - Smileys as words
 
   «и смайлики» under «Озвучивать имена» (on by default): a line of nothing but smileys is read as an emote — «)))», «:D», «xD» «Громмаш смеётся», «)», «))», «:)», «8)», «:3», «^_^» «улыбается», «(((», «:(» «грустит», «T_T» «плачет», «O_o» «удивляется», «-_-» «хмурится», «>_<» «морщится», «<3» «показывает сердечко», «=\», «:/» «в недоумении» — and at the end of a line the same feeling follows it (two brackets for a smile or sadness, three for a laugh: «И улыбается.», «И смеётся.»), the smileys at the end themselves not read out («<3» at the end is no longer «три»). One bracket or «:)» after a phrase stays the pause it was, a smile someone took the trouble to type («^_^», «:3», «8-)», not a quick «^^») is said («И улыбается.»), «8)» after a word is left as typed (it may be «в 8»), spaced brackets that pair up («( это шутка )») stay parentheses, faces («^_^», «T_T», «O_o», «-_-», «>_<») mid-line are a pause, as whole words only («leo_orc», «10_000» stay), and a line of smileys names no place. Chosen from the chat's own logs: brackets and letters, no picture emoji.
