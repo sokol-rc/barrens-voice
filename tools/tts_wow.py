@@ -19,14 +19,14 @@ def open_capture(config, place):
     return cap
 
 
-def foreground_corpus(config, place, lines):
+def foreground_corpus(config, place, lines, gap):
     import win32gui
 
     cap = open_capture(config, place)
     hwnd = cap.window[0]
     try:
         for i, col, line, source in lines:
-            time.sleep(1.4 if i < 0 else .4)
+            time.sleep(1.4 if i < 0 else gap)
             if win32gui.GetForegroundWindow() != hwnd:
                 raise RuntimeError("WoW lost focus before synthesis")
             yield i, col, line, source

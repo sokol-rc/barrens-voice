@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import queue
 import subprocess
@@ -232,7 +233,7 @@ def run(args, work):
         cases = button_lines(config, args.wow_button, args.wow_place, args.wow_count)
     elif args.wow_corpus:
         from tts_wow import foreground_corpus
-        cases = foreground_corpus(config, args.wow_place, corpus_lines())
+        cases = foreground_corpus(config, args.wow_place, corpus_lines(), args.wow_gap)
     else:
         cases = corpus_lines()
     with closing(cases):
@@ -306,6 +307,10 @@ if __name__ == "__main__":
     live.add_argument("--wow-button", nargs=2, type=int, metavar=("X", "Y"),
                       help="click the local addon test button at these WoW client pixel coordinates")
     parser.add_argument("--wow-place", help="strip geometry from the installed data/tmp/strip.json")
+    parser.add_argument("--wow-gap", type=float, default=.4, help="seconds idle between foreground corpus messages")
     parser.add_argument("--wow-count", type=int, choices=range(1, 31), default=3)
+    args = parser.parse_args()
+    if not math.isfinite(args.wow_gap) or args.wow_gap < 0:
+        parser.error("--wow-gap must be a finite nonnegative number of seconds")
     with tempfile.TemporaryDirectory() as tmp:
-        run(parser.parse_args(), Path(tmp))
+        run(args, Path(tmp))
