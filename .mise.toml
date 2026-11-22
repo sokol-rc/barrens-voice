@@ -69,3 +69,11 @@ run = "uv run --locked python tools/stats.py"
 [tasks.hooks]
 description = "Use the repository's git hooks (.githooks: pre-push checks release tags with tools/check_tag.py)"
 run = "git config core.hooksPath .githooks"
+
+[tasks.tts-bench]
+description = "Replay Russian messages on the Windows CUDA companion and measure latency"
+run = "uv run --locked --extra cuda python tools/tts_bench.py"
+
+[tasks.tts-score]
+description = "Check benchmark recordings with the companion's Whisper model"
+run = "uv run --locked --extra cuda python tools/tts_score.py"
