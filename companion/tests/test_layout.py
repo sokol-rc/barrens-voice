@@ -434,7 +434,7 @@ class Layout(unittest.TestCase):
     def test_settings_saved_with_what_the_file_did_not_take(self):
         # a change config.json did not take (pending) was lost to the settings window's save
         from bv.launcher import model, paint
-        a = self.make()
+        a = self.make(config={"f5_end_check": "off"})
         a.pending, a.config_told = {"game": "retail"}, {"unwritten"}
         actions, written, real = {}, [], paint.Painter.button
 
@@ -446,6 +446,7 @@ class Layout(unittest.TestCase):
             a.open_settings()
             actions["save"]()
         self.assertEqual(written[0]["game"], "retail")
+        self.assertNotIn("f5_end_check", written[0])  # saving other fields preserves the file's "off"
         self.assertEqual((a.pending, a.config_told), ({}, set()))
 
     def test_an_installs_start(self):

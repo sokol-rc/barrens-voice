@@ -50,7 +50,12 @@ def transformer(source: Path, cache: Path, steps: int) -> Path:
         path = Path(tmp.name)
     try:
         onnx.save(model, path)
-        os.replace(path, target)
+        try:
+            os.replace(path, target)
+        except PermissionError:
+            # On Windows another process can already be using the complete file it won the race to publish.
+            if not target.is_file():
+                raise
     finally:
         path.unlink(missing_ok=True)
     return target

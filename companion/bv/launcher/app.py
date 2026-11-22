@@ -1056,8 +1056,9 @@ class App:
                     game_dirs.pop(game, None)
             changes["game_dirs"] = game_dirs
             changes.update(log_keep_days=days, log_details=flags["details"],
-                           f5_end_check="whisper" if flags["whisper"] else "silence",
                            auto_update=flags["auto"], update_channel="beta" if flags["beta"] else "stable")
+            if flags["whisper"] != (cfg.get("f5_end_check") == "whisper"):
+                changes["f5_end_check"] = "whisper" if flags["whisper"] else "silence"
             return changes
 
         def differs(changes: dict) -> bool:
