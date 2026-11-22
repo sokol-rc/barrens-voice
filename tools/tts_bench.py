@@ -53,6 +53,8 @@ def run(args, work):
         return sum(v for key, v in values.items() if key.startswith(process_prefix)) / 2**20
 
     config = dict(app.DEFAULT_CONFIG, f5_profile=args.profile)
+    if args.provider:
+        config["f5_onnx_provider"] = args.provider
     if args.steps:
         if args.profile == "quality":
             raise ValueError("--steps requires an accelerated profile")
@@ -88,6 +90,8 @@ def run(args, work):
             nonlocal first_block
             now = clock()
             try:
+                if status.output_underflow:
+                    row["underflows"] += 1
                 callback(out, frames, times, status)
             finally:
                 if first_block is None:
@@ -163,8 +167,9 @@ def run(args, work):
 
     if getattr(speaker.onnx, "accelerated", False):
         timed(speaker.onnx.cuda_dec, "run_with_iobinding", "decode")
-    if args.profile != "quality" and not speaker.onnx.accelerated:
-        raise RuntimeError(f"{args.profile} reverted to quality")
+    expect_acceleration = args.profile != "quality" and speaker.provider == "CUDAExecutionProvider"
+    if expect_acceleration != getattr(speaker.onnx, "accelerated", False):
+        raise RuntimeError(f"Unexpected graph for {args.profile} on {speaker.provider}")
 
     engines = Engines(config, log, work, None, speaker.accentor, player)
     engines.f5, engines.ready = speaker, True
@@ -188,7 +193,7 @@ def run(args, work):
             stages.clear()
             chunks.clear()
             first_block = None
-            row = dict(id=i, size="cold" if i < 0 else ("short", "long")[col], voice=voice, received_s=clock())
+            row = dict(id=i, size="cold" if i < 0 else ("short", "long")[col], voice=voice, received_s=clock(), underflows=0)
             lines.handle(line, first=False)
             if not ready.wait(90):
                 raise RuntimeError(f"Synthesis timeout for {i}/{col}")
@@ -197,7 +202,9 @@ def run(args, work):
                     raise RuntimeError(f"No completed speech for {i}/{col}")
             pcm = [audio.samples_of(data) for _, data in chunks]
             sr = pcm[0][1]
-            samples = np.concatenate([part for part, rate in pcm if rate == sr])
+            if any(rate != sr for _, rate in pcm):
+                raise ValueError("Sample rate changed between packets")
+            samples = np.concatenate([part for part, _ in pcm])
             if not np.isfinite(samples).all() or np.max(np.abs(samples)) < 0.01:
                 raise ValueError(f"Invalid PCM for {i}/{col}")
             if args.wav_dir and i >= 0:
@@ -205,7 +212,7 @@ def run(args, work):
                 args.wav_dir.mkdir(exist_ok=True, parents=True)
                 sf.write(args.wav_dir / f"{i:02}-{col}.wav", samples, sr)
             elapsed = chunks[-1][0] - row["queued_s"]
-            if args.profile != "quality" and not speaker.onnx.accelerated:
+            if expect_acceleration and not speaker.onnx.accelerated:
                 raise RuntimeError("Accelerated inference reverted to quality")
             audio_s = len(samples) / sr - audio.TAIL
             row.update(process_vram_mib=dedicated_mib(), text_ms=sum(stages["text"]),
@@ -225,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--hf", type=Path, required=True)
     parser.add_argument("--pairs", type=int, default=30, choices=range(1, 31))
     parser.add_argument("--profile", choices=("quality", "balanced", "fastest"), default="quality")
+    parser.add_argument("--provider", choices=("CUDAExecutionProvider", "DmlExecutionProvider"))
     parser.add_argument("--steps", type=int, choices=(4, 5, 6, 8), help="test another complete schedule")
     parser.add_argument("--full-playback", action="store_true", help="submit complete muted streams to the device")
     parser.add_argument("--wav-dir", type=Path)
