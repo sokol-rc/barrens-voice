@@ -145,3 +145,47 @@ class Profiles(unittest.TestCase):
         with mock.patch.object(output, "_stream", side_effect=[OSError("unsupported buffer"), True]) as stream:
             output.play(audio.wav(b"\0\0"*1000, 8000), lambda: 1, threading.Event(), 1, low_latency=True)
         self.assertEqual([call.args[-1] for call in stream.call_args_list], [True, False])
+
+    def test_fast_stream_follows_mapper_after_default_changes(self):
+        sd = mock.Mock()
+        sd.query_hostapis.return_value = [{"name": "Windows WASAPI", "default_output_device": 8}]
+        with mock.patch.object(audio, "preferred_output", side_effect=[4, 4, 4, 5]):
+            output = audio.StreamOut(sd)
+            output.device = 1
+            output._open_stream(True)
+            self.assertEqual(sd.OutputStream.call_args.kwargs["device"], 8)
+            sd.WasapiSettings.assert_called_once_with(auto_convert=True)
+            sd.OutputStream.side_effect = [OSError("shared mode unsupported"), object(), object(), object()]
+            output._open_stream(True)
+            output._open_stream(True)
+            output._open_stream(False)
+        self.assertEqual([(c.kwargs["device"], c.kwargs["blocksize"]) for c in sd.OutputStream.call_args_list],
+                         [(8, 0), (8, 0), (1, 512), (1, 512), (1, 1024)])
+
+    def test_fast_piece_cache_respects_voice_tempo_provider_and_limits(self):
+        model = f5engine.F5Speaker(dict(DEFAULT_CONFIG, f5_profile="fastest"), lambda *_: None, Path("."))
+        model.onnx = SimpleNamespace(accelerated=True, using_trt=True, synth=mock.Mock(
+            return_value=(np.ones(4, dtype=np.float32), 24000)))
+        model.ref_audio = {"a": object(), "b": object()}
+        model.ref_text = {"a": "Образец", "b": "Голос"}
+        model.ref_seconds = {"a": 2, "b": 2}
+        model.duration = lambda slot, text, rate, who: 2 + rate / 100
+        def synth(voice="a", text="Привет!", rate=100):
+            return model._synth(SimpleNamespace(path=voice, id=voice), text, rate, "Игрок")
+        with mock.patch.object(f5engine, "RECENT_PIECES", 2):
+            first = synth()
+            synth("b")
+            self.assertIs(synth()[0], first[0])
+            synth(rate=110)  # evicts b after a was reused
+            synth("b")
+            model.onnx.using_trt = False
+            synth("b")
+            self.assertEqual(model.onnx.synth.call_count, 5)
+        with mock.patch.object(f5engine, "MAX_PIECE_BYTES", 1):
+            synth(text="Другая.")
+            synth(text="Другая.")
+        self.assertEqual(model.onnx.synth.call_count, 7)
+        model.config.update(f5_profile="quality", f5_end_check="off")
+        synth("b")
+        synth("b")
+        self.assertEqual(model.onnx.synth.call_count, 9)

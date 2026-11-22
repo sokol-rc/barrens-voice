@@ -13,6 +13,7 @@ import re
 import queue
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from .assign import Assigner
@@ -23,6 +24,8 @@ from .text import Accentor, numbers_to_words
 
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 GAP = 0.15   # seconds between sentence groups made separately
+RECENT_PIECES = 16
+MAX_PIECE_BYTES = 512 * 1024
 
 
 def sentence_groups(text: str) -> list[str]:
@@ -336,6 +339,7 @@ class F5Speaker:
         self.device = self.card = self.provider = ""
         self.ref_text: dict[str, str] = {}
         self.target_pace = 0.0
+        self.recent_pieces = OrderedDict()
 
     # --- setup (on the synth thread) --------------------------------------------------------
 
@@ -411,6 +415,14 @@ class F5Speaker:
         hear the last word ("whisper": a second saved on such lines for 1.5 GB of video memory)."""
         ref_file, ref_text, ref = slot.path, self.ref_text[slot.id], self.ref_seconds[slot.id]
         total = self.duration(slot, text, rate, character)
+        # Duration already includes the character's tempo and the addon's rate. Keep the raw
+        # voice so question shaping, channel gain and the current playback volume still apply.
+        cache_key = None
+        if character and self.fastest():
+            cache_key = (slot.id, text, total, self.onnx.using_trt)
+            if cache_key in self.recent_pieces:
+                self.recent_pieces.move_to_end(cache_key)
+                return self.recent_pieces[cache_key]
         if ref_file not in self.ref_audio:
             import soundfile as sf
             from .whisper_onnx import resample
@@ -422,6 +434,11 @@ class F5Speaker:
                     or silence_after(wav, sr) >= CUT_TAIL or self._whole(wav, sr, text)):
                 break
             total = ref + (total - ref) * 1.25
+        if (cache_key is not None and self.fastest() and self.onnx.using_trt == cache_key[-1]
+                and wav.nbytes <= MAX_PIECE_BYTES):
+            self.recent_pieces[cache_key] = (wav, sr)
+            if len(self.recent_pieces) > RECENT_PIECES:
+                self.recent_pieces.popitem(last=False)
         return wav, sr
 
     def _whole(self, wav, sr: int, text: str) -> bool:

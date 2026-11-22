@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import queue
+import sys
 import threading
 import time
 import wave
@@ -103,6 +104,22 @@ class StreamBroken(OSError):
     """The stream failed twice for one line, the list of devices read again between: the device is gone for good."""
 
 
+def preferred_output() -> int | None:
+    """Current Windows mapper target. PortAudio's WASAPI default is a startup snapshot."""
+    if sys.platform == "win32":
+        import ctypes
+        device, flags = ctypes.c_uint32(), ctypes.c_uint32()
+        try:
+            # WAVE_MAPPER, DRVM_MAPPER_PREFERRED_GET (mmddk.h).
+            status = ctypes.windll.winmm.waveOutMessage(ctypes.c_void_p(0xffffffff), 0x2015,
+                                                       ctypes.byref(device), ctypes.byref(flags))
+            if status == 0 and device.value != 0xffffffff:
+                return device.value
+        except (AttributeError, OSError):
+            pass
+    return None
+
+
 class StreamOut:
     """Plays a line as a stream (PortAudio, through sounddevice): the volume asked is read for every block, so the mouse
     wheel reaches the line playing at once, louder and quieter, 0..2 of it (over 1 the peaks eased, `limit`). Nothing
@@ -122,6 +139,7 @@ class StreamOut:
             import sounddevice as sd
         self.sd = sd
         self.device = self.mapper()
+        self.preferred = preferred_output()
 
     def mapper(self):
         """Windows' sound mapper's index in PortAudio's list (None: the default device - not Windows, no MME)."""
@@ -147,6 +165,21 @@ class StreamOut:
             except Exception as e:
                 raise StreamBroken(f"PortAudio не запустился: {e}") from e
         self.device = self.mapper()
+        self.preferred = preferred_output()
+
+    def _open_stream(self, low_latency, **kwargs):
+        sd = self.sd
+        if low_latency:
+            kwargs["latency"] = "low"
+            if self.preferred is not None and self.preferred == preferred_output():
+                try:
+                    device = next(h["default_output_device"] for h in sd.query_hostapis()
+                                  if h["name"] == "Windows WASAPI" and h["default_output_device"] >= 0)
+                    return sd.OutputStream(device=device, blocksize=0,
+                                           extra_settings=sd.WasapiSettings(auto_convert=True), **kwargs)
+                except Exception:  # shared stream unavailable at this format or endpoint
+                    pass
+        return sd.OutputStream(device=self.device, blocksize=512 if low_latency else self.BLOCK, **kwargs)
 
     def play(self, data: bytes, level, stopped: threading.Event, length: float, *, low_latency=False) -> None:
         """Until the line ends or `stopped` is set (a stop or a pause cuts it). `length`: the outputs' interface (a fake
@@ -187,9 +220,8 @@ class StreamOut:
             out[len(chunk):, 0] = 0
             if len(chunk) < frames:
                 raise sd.CallbackStop
-        stream = sd.OutputStream(device=self.device, samplerate=rate, channels=1, dtype="float32",
-                                 blocksize=512 if low_latency else self.BLOCK, callback=callback,
-                                 finished_callback=done.set, **({"latency": "low"} if low_latency else {}))
+        stream = self._open_stream(low_latency, samplerate=rate, channels=1, dtype="float32",
+                                   callback=callback, finished_callback=done.set)
         try:
             stream.start()
             beat["at"] = time.monotonic()          # the first block comes a buffer after the start: no stall before it

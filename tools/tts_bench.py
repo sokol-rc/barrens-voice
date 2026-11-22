@@ -129,7 +129,11 @@ def run(args, work):
                                     row.setdefault("packet_dac_spans_ms", []).append(span)
                                 span[1] = block_ms + 1000 * audible[-1] / kwargs["samplerate"]
                 out.fill(0)  # keep real device timing without speaking the corpus through the user's speakers
-        return output_stream(callback=observe, **kwargs)
+        opened = output_stream(callback=observe, **kwargs)
+        device = sd.query_devices(opened.device)
+        row.setdefault("audio_hostapi", sd.query_hostapis(device["hostapi"])["name"])
+        row.setdefault("audio_endpoint", device["name"])
+        return opened
 
     sd.OutputStream = stream
     output = audio.StreamOut()
