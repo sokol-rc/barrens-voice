@@ -25,7 +25,7 @@ DIST = ROOT / "dist"
 sys.path.insert(0, str(ROOT / "companion"))
 from bv import news  # noqa: E402 - news.toml's reading and checks, the companion's own
 
-REPO_URL = "https://github.com/rgeraskin/barrens-voice"
+REPO_URL = "https://github.com/" + os.environ.get("GITHUB_REPOSITORY", "rgeraskin/barrens-voice")
 TOC = "addon/BarrensVoice/BarrensVoice.toc"
 INSTALL = "Установка: скачай `BarrensVoice-Setup.exe` и запусти его."
 # the uv the installer ships and the updates bring (the manifest names it: an install with another fetches it)
