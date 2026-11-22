@@ -241,3 +241,14 @@ class Hook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForkPackaging(unittest.TestCase):
+    def test_windows_checkout_preserves_line_endings_and_sets_update_identity(self):
+        from base64 import b64encode
+        from unittest.mock import patch
+        public = b64encode(bytes(32)).decode()
+        source = b'REPO = "upstream/project"\r\nPUBLIC_KEY = "old"\r\n'
+        with patch.dict("os.environ", BV_RELEASE_REPO="fork/project", BV_UPDATE_PUBLIC_KEY=public):
+            self.assertEqual(release.update_channel(source),
+                             f'REPO = "fork/project"\r\nPUBLIC_KEY = "{public}"\r\n'.encode())

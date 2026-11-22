@@ -379,7 +379,7 @@ def update_channel(data: bytes) -> bytes:
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or len(base64.b64decode(public, validate=True)) != 32:
         raise ValueError("Set BV_UPDATE_PUBLIC_KEY to the fork's Ed25519 public key")
     for name, value in (("REPO", repo), ("PUBLIC_KEY", public)):
-        data, count = re.subn(fr'(?m)^{name} = "[^"]*"$'.encode(), f'{name} = "{value}"'.encode(), data)
+        data, count = re.subn(fr'(?m)^{name} = "[^"]*"(?=\r?$)'.encode(), f'{name} = "{value}"'.encode(), data)
         if count != 1:
             raise ValueError(f"Expected one {name} assignment in packaged update.py")
     return data
