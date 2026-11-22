@@ -27,6 +27,7 @@ class WindowCapture:
         self.rect = rect               # x, y, width, height of the strip in the client area
         self.lock = threading.Lock()
         self.strip: tuple[bytes, int, int] | None = None
+        self.observe_strip = None  # optional live benchmark observer, on the WGC thread
         self.whole: tuple[bytes, int, int] | None = None
         self.want_whole = False
         self.closed = False
@@ -51,8 +52,11 @@ class WindowCapture:
             if self.want_whole:
                 cw, ch = min(self.client[2], buf.shape[1] - ox), min(self.client[3], buf.shape[0] - oy)
                 whole = (buf[oy:oy + ch, ox:ox + cw].tobytes(), cw, ch)
+            strip = (rows.tobytes(), w, h)
+            if self.observe_strip is not None:
+                self.observe_strip(strip, frame.timespan)
             with self.lock:
-                self.strip = (rows.tobytes(), w, h)
+                self.strip = strip
                 if whole is not None:
                     self.whole, self.want_whole = whole, False
 

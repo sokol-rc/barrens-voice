@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,10 +218,20 @@ def run(args, work):
     print(json.dumps(header), flush=True)
     pairs = [line.split("|") for line in corpus.decode().splitlines()]
     cast = [("Громмаш", "Orc", "2"), ("Джайна", "Human", "3"), ("Брэнн", "Dwarf", "2")]
-    for i, pair in [(-1, ["Проверка связи."]), *enumerate(pairs[:args.pairs])]:
-        for col, raw in enumerate(pair):
-            sender, race, sex = cast[(i + col) % len(cast)]
-            line = Line("say", sender, race, sex, "", "", raw, voice="f5", options={"id": f"{i}-{col}"})
+    def corpus_lines():
+        for i, pair in [(-1, ["Проверка связи."]), *enumerate(pairs[:args.pairs])]:
+            for col, raw in enumerate(pair):
+                sender, race, sex = cast[(i + col) % len(cast)]
+                yield i, col, Line("say", sender, race, sex, "", "", raw, voice="f5",
+                                   options={"id": f"{i}-{col}"}), {}
+
+    if args.wow_button:
+        from tts_wow import button_lines
+        cases = button_lines(config, args.wow_button, args.wow_place, args.wow_count)
+    else:
+        cases = corpus_lines()
+    with closing(cases):
+        for i, col, line, source in cases:
             voice = speaker.describe(line)
             ready.clear()
             played_chunks = 0
@@ -228,6 +239,9 @@ def run(args, work):
             chunks.clear()
             first_block = None
             row = dict(id=i, size="cold" if i < 0 else ("short", "long")[col], voice=voice, received_s=clock(), underflows=0)
+            if source:
+                row["size"] = "cold" if source["trial"] == 1 else "repeat"
+            row.update(source)
             lines.handle(line, first=False)
             if not ready.wait(90):
                 raise RuntimeError(f"Synthesis timeout for {i}/{col}")
@@ -257,7 +271,9 @@ def run(args, work):
                        rss_peak_mib=win32process.GetProcessMemoryInfo(win32api.GetCurrentProcess())["PeakWorkingSetSize"]/2**20,
                        gpu_used_mib=int(gpu()[2]), chunks=len(chunks),
                        ready_ms=[(t-row["received_s"])*1000 for t, _ in chunks])
-            if i < 0 and "dac_ms" in row:
+            if source and "dac_ms" in row:
+                row["click_to_dac_ms"] = (row["received_s"] - row["click_s"]) * 1000 + row["dac_ms"]
+            if row["size"] == "cold" and "dac_ms" in row:
                 row["start_to_dac_ms"] = (row["received_s"] - started)*1000 + row["dac_ms"]
             if args.sample_vram:
                 row["sampled_vram_peak_mib"] = vram_peak
@@ -279,5 +295,9 @@ if __name__ == "__main__":
     parser.add_argument("--full-playback", action="store_true", help="submit complete muted streams to the device")
     parser.add_argument("--sample-vram", action="store_true", help="sample dedicated memory every 100 ms, including startup")
     parser.add_argument("--wav-dir", type=Path)
+    parser.add_argument("--wow-button", nargs=2, type=int, metavar=("X", "Y"),
+                        help="click the local addon test button at these WoW client pixel coordinates")
+    parser.add_argument("--wow-place", help="strip geometry from the installed data/tmp/strip.json")
+    parser.add_argument("--wow-count", type=int, choices=range(1, 31), default=3)
     with tempfile.TemporaryDirectory() as tmp:
         run(parser.parse_args(), Path(tmp))
