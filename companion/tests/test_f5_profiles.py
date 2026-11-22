@@ -63,11 +63,14 @@ class Profiles(unittest.TestCase):
                 return SimpleNamespace(get_modelmeta=lambda: SimpleNamespace(custom_metadata_map=meta),
                                        get_providers=lambda: names,
                                        get_inputs=lambda: [SimpleNamespace(type="tensor(float)")])
-            with mock.patch("onnxruntime.InferenceSession", side_effect=session), \
+            runtime = SimpleNamespace(InferenceSession=session, SessionOptions=SimpleNamespace,
+                                      GraphOptimizationLevel=SimpleNamespace(ORT_ENABLE_ALL=1))
+            with mock.patch.dict(sys.modules, onnxruntime=runtime), \
                     mock.patch.object(f5schedule, "transformer", return_value=home / "reduced"):
                 model.load()
             self.assertFalse(model.accelerated)
             self.assertEqual(model.steps, 10)
+            self.assertIn(("dec", "CUDAExecutionProvider"), calls)
             self.assertEqual(calls[-2:], [("net", "CUDAExecutionProvider"), ("dec", "CPUExecutionProvider")])
 
     def test_failed_cuda_inference_retries_same_input_on_quality_once(self):

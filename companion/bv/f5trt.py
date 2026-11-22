@@ -41,7 +41,14 @@ def session(model: Path, directory: Path, options, cuda, max_frames: int):
         settings.update(trt_engine_cache_enable=True, trt_engine_cache_path=str(cache))
     with os.add_dll_directory(str(directory)):
         libraries_loaded = [ctypes.WinDLL(str(dll)) for dll in libraries]
-        net = ort.InferenceSession(str(model), options, providers=[(PROVIDER, settings), *cuda])
+        # The native builder loads its architecture-specific resource by basename using
+        # LoadLibrary. On Windows its search ignores Python's AddDllDirectory entry.
+        previous_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(directory) + os.pathsep + previous_path
+        try:
+            net = ort.InferenceSession(str(model), options, providers=[(PROVIDER, settings), *cuda])
+        finally:
+            os.environ["PATH"] = previous_path
         on_card(net, PROVIDER)
     net._bv_trt_libraries = libraries_loaded  # the DLLs must outlive this session
     return net
