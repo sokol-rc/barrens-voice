@@ -10,8 +10,8 @@ pymorphy3==2.0.6
 pymorphy3-dicts-ru==2.4.417150.4580142
 windows-capture==2.0.1
 praat-parselmouth==0.4.7
-# race voices: F5 and Whisper through ONNX Runtime (DirectML is installed by BarrensVoice.cmd, after
-# RUAccent has pulled in the CPU-only onnxruntime)
+# race voices: BarrensVoice.cmd replaces RUAccent's CPU ONNX Runtime with DirectML or CUDA.
+# On NVIDIA it also installs onnx to prepare the accelerated F5 schedules.
 soundfile==0.14.0
 scipy==1.18.1
 transformers==5.22.2

@@ -5,8 +5,8 @@ The models are the Russian F5 (Misha24-10/F5-TTS_RUSSIAN) exported by DakeQQ/F5-
 in one folder - Metadata (sample rates, hop, the number of steps), Preprocess (reference audio and text
 to the starting noise and the conditions), Transformer (one denoising step; our export runs 10 of them,
 `nfe_step` in Metadata, fixed at export with CFG 2 and sway -1, as the torch F5 the companion used),
-Decode (Vocos: mel to audio). Preprocess and the Transformer run on the card; Decode on the CPU - on
-DirectML it gives silence (the exporter says so).
+Decode (Vocos: mel to audio). Quality uses CPU Decode. The optional CUDA profiles keep the FP16
+outputs bound across all three graphs and check the CUDA vocoder against the CPU on warm-up.
 
 The length of the speech is the caller's, as with the torch engine's `fix_duration`: the total seconds
 (reference and line) become the frames of `max_duration`.
@@ -137,21 +137,24 @@ class F5Onnx:
         ref_frames = int(len(ref_audio) * self.sample_rate / self.in_rate) // self.hop
         duration = max(ids.shape[1], ref_frames + 1) + 1
         duration = min(max(duration, self.frames(total_seconds)), self.max_frames)
+        feed = {"audio": audio.reshape(1, 1, -1), "text_ids": ids, "max_duration": np.array([duration], np.int64)}
         with self.lock:
-            feed = {"audio": audio.reshape(1, 1, -1), "text_ids": ids, "max_duration": np.array([duration], np.int64)}
-            if self.accelerated:
-                try:
-                    out = self._cuda(feed)
-                except Exception as e:
-                    self.log(f"Ускоренный синтез не удался, повторяю в quality: {e}")
-                    self._quality()
-            if not self.accelerated:
-                noise, cos, sin, cond, cond_drop, ref_len, rms, tail = self.pre.run(None, feed)
-                fixed = {"rope_cos": cos, "rope_sin": sin, "cat_mel_text": cond, "cat_mel_text_drop": cond_drop}
-                noise = self._denoise(noise, fixed)
-                out = self.dec.run(None, {"denoised": noise, "ref_signal_len": ref_len, "rms_scale": rms,
-                                          "ref_mel_tail": tail})[0]
+            out = self._infer(feed)
         return clean_tail(np.asarray(out, dtype=np.float32).reshape(-1), self.hop, self.out_rate), self.out_rate
+
+    def _infer(self, feed):
+        if self.accelerated:
+            try:
+                return self._cuda(feed)
+            except Exception as e:
+                self.log(f"Ускоренный синтез не удался, повторяю в quality: {e}")
+            # Release the traceback holding the failed graph's device buffers before loading the original.
+            self._quality()
+        noise, cos, sin, cond, cond_drop, ref_len, rms, tail = self.pre.run(None, feed)
+        fixed = {"rope_cos": cos, "rope_sin": sin, "cat_mel_text": cond, "cat_mel_text_drop": cond_drop}
+        noise = self._denoise(noise, fixed)
+        return self.dec.run(None, {"denoised": noise, "ref_signal_len": ref_len, "rms_scale": rms,
+                                   "ref_mel_tail": tail})[0]
 
     def _cuda(self, feed):
         import onnxruntime as ort
