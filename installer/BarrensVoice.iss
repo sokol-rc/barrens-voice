@@ -36,17 +36,17 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ShowLanguageDialog=no
-; what the libraries and the models take after installing (README: about 6 GB with NVIDIA)
+; Minimum for the ONNX installation. The optional OmniVoice package needs additional space.
 ExtraDiskSpaceRequired=6442450944
 ; Setup and Uninstall wait while the launcher or the companion runs (their named mutexes, bv/launcher/app.py
 ; and bv/__main__.py, "Local\": this session's): installing over a running version fails in uv sync or the switch
-AppMutex=BarrensVoiceLauncher,BarrensVoiceCompanion
+AppMutex={code:AppMutexName}
 
 [Languages]
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Messages]
-ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе со всем, что скачает: библиотеками и моделями (около 6 ГБ с видеокартой NVIDIA, около 4 ГБ с другой).
+ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе с моделями и библиотеками. Для установки с OmniVoice на NVIDIA рекомендуется 18 ГБ свободного места.
 
 [Tasks]
 Name: "desktopicon"; Description: "Значок на рабочем столе"
@@ -65,6 +65,8 @@ Source: "..\dist\barrens-voice-{#AppVersion}.zip"; DestDir: "{app}\setup"; Flags
 Filename: "{cmd}"; Parameters: "/c ""set ""UV_PYTHON_INSTALL_DIR={app}\python""&& set ""UV_CACHE_DIR={app}\cache\uv""&& set ""UV_PYTHON_PREFERENCE=only-managed""&& ""{app}\uv.exe"" run --no-project --python 3.13 ""{app}\setup\install.py"" --root ""{app}"" --archive ""{app}\setup\barrens-voice-{#AppVersion}.zip"" """; StatusMsg: "Скачиваю Python и библиотеки (0,6–2,5 ГБ, несколько минут)…"; Flags: waituntilterminated
 ; the models now, not at the first start (~3 GB once)
 Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --fetch-models"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Скачиваю модели голосов (около 3 ГБ)…"; Flags: waituntilterminated
+Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --prepare-omnivoice"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Готовлю OmniVoice для NVIDIA (несколько ГБ, подождите)…"; Flags: waituntilterminated
+Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --install-addons"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Устанавливаю аддон в найденные папки WoW…"; Flags: waituntilterminated; Check: not IsStaging
 Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv.trt_runtime"; WorkingDir: "{app}\app\current\companion"; Tasks: tensorrt; StatusMsg: "Скачиваю библиотеки TensorRT…"; Flags: waituntilterminated
 Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Description: "Запустить Barrens Voice Launcher"; Flags: postinstall nowait skipifsilent
 
@@ -94,6 +96,14 @@ Type: files; Name: "{app}\barrens-voice.install"
 function IsStaging: Boolean;
 begin
   Result := ExpandConstant('{param:STAGING|0}') = '1';
+end;
+
+function AppMutexName(Param: String): String;
+begin
+  if IsStaging then
+    Result := 'BarrensVoiceStaging'
+  else
+    Result := 'BarrensVoiceLauncher,BarrensVoiceCompanion';
 end;
 
 { the install folder inside PowerShell's single quotes: a ' in it doubled }

@@ -16,6 +16,17 @@
 # The game's font has no «→» or en dash (use «=», «—» or «-»), and «|» starts the game's markup: none of them here.
 
 [[entry]]
+version = "0.5.0"
+kind = "big"
+title = "OmniVoice на Windows"
+summary = "Новый голосовой движок для NVIDIA"
+items = [
+    "Установщик готовит OmniVoice прямо в Windows и ставит аддон в найденный WoW.",
+    "В настройках профиля OmniVoice можно выбрать «Качество» или «Баланс». Выбор действует со следующей реплики.",
+    "Если OmniVoice не запускается, лаунчер пробует F5 и голоса Windows.",
+]
+
+[[entry]]
 version = "0.4.1"
 date = "22.11.2026"
 kind = "big"

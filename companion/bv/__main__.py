@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
     # longer; "whisper" - made again only if Whisper does not hear the last word (1.5 GB of video memory)
     "f5_end_check": "silence",
     "f5_profile": "quality",
-    "race_voice_backend": "f5",
+    "race_voice_backend": "auto",
     "omnivoice_profile": "quality",
     "omnivoice_wsl_distro": "Ubuntu",
     "omnivoice_wsl_python": "",
@@ -566,7 +566,7 @@ def main() -> int:
         print("Windows only")
         return 1
     utf8_output()
-    offline = offline_models() if "--fetch-models" not in sys.argv else False
+    offline = False if {"--fetch-models", "--prepare-omnivoice"}.intersection(sys.argv) else offline_models()
     # two notices of RUAccent's own, harmless and not ours to fix: a regex string it writes without r"" (shown
     # once, when Python first compiles it) and an argument huggingface_hub no longer uses
     import warnings
@@ -614,6 +614,25 @@ def main() -> int:
         return f5_selftest(config, log, DATA_DIR)
     if "--fetch-models" in sys.argv:
         return fetch_models(config)
+    if "--prepare-omnivoice" in sys.argv:
+        from .omni_runtime import prepare
+        try:
+            prepare(log)
+        except Exception as error:  # optional GPU runtime: the installed ONNX and Windows voices still work
+            log(f"OmniVoice не удалось установить: {error}. Доступны F5 и голоса Windows.", "WARN")
+        return 0
+    if "--install-addons" in sys.argv:
+        from .launcher import model
+        source = model.addon_source()
+        if source is not None:
+            for found in model.find_games(config):
+                if found.addon is None and not found.addon_dir.exists():
+                    try:
+                        model.install_addon(source, found.root)
+                        log(f"Аддон установлен: {found.name}")
+                    except OSError as error:
+                        log(f"Аддон можно установить из лаунчера: {error}", "WARN")
+        return 0
     log("=" * 60)
     if not single_instance():
         log("озвучка уже запущена — вторая не нужна, выхожу")

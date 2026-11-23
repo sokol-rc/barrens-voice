@@ -7,7 +7,7 @@
 
 [project]
 name = "barrens-voice"
-version = "0.4.1"
+version = "0.5.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     # the strip: the game window's pixels, and Windows' own APIs

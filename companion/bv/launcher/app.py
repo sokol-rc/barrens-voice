@@ -981,8 +981,12 @@ class App:
         if self.settings_win is not None and self.settings_win.winfo_exists():
             self.settings_win.lift()
             return
+        from ..omni_runtime import selected
+
         cfg = model.read_config()
-        omni = cfg.get("race_voice_backend") == "omnivoice"
+        status = self.companion.state()
+        provider = status.get("provider", "") if status.get("voices") == "ready" else ""
+        omni = provider.startswith("OmniVoice") if provider else selected(cfg)
         width, height = 600, 696 if omni else 840
         win, c, p = self._child("Настройки", width, height)
         self.settings_win = win
@@ -1055,7 +1059,7 @@ class App:
         lead = "Остальное — в config.json:"
         c.create_text(30, y + 72, anchor="w", fill=DIM, font=p.small, text=lead)
         doc_tag = release_tag(self.version) if INSTALL_DIR is not None and self.version != "?" else "master"
-        p.link(30 + p.measure(lead, p.small) + 6, y + 72, "описание настроек", "configdoc",
+        p.link(30 + p.measure(lead, p.small) + 12, y + 72, "описание настроек", "configdoc",
                lambda: webbrowser.open(f"https://github.com/{model.REPO}/blob/{doc_tag}/docs/config.md"))
         c.create_text(30, y + 92, anchor="w", fill=DIM, font=p.small,
                       text="Профиль OmniVoice применяется со следующей реплики." if omni

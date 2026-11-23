@@ -23,6 +23,7 @@ class Engines:
         self.sapi, self.accentor = sapi, accentor
         self.f5 = None
         self.ready = False
+        self.omni_failed = False
         self.on_ready = None    # called once F5 is loaded (all models are in the cache by then)
         self.on_models_missing = None   # called with the error when F5 failed for a model missing from the cache
         self.failed_at = None   # clock() of the last failed load: not tried again for RETRY_AFTER
@@ -40,6 +41,7 @@ class Engines:
         elif voice == "sapi":
             with self.lock:
                 self.failed_at = None       # switched away: switching back tries again at once
+                self.omni_failed = False
             self._unload()
 
     def follow(self, line: Line) -> None:
@@ -56,15 +58,19 @@ class Engines:
             # every frame and chat line asks for F5: a failed load is not started again for each
             if self.failed_at is not None and self.clock() - self.failed_at < RETRY_AFTER:
                 return
-            if self.config.get("race_voice_backend") == "omnivoice":
+            from .omni_runtime import selected
+            if not self.omni_failed and selected(self.config):
                 from .omni import OmniSpeaker as speaker_type
             else:
                 from .f5engine import F5Speaker as speaker_type
-            self.log("загружаю голоса рас ...")
-            state.report(voices="loading")
-            speaker = speaker_type(self.config, self.log, self.home, self.accentor, self.player)
-            self.f5, self.ready = speaker, False
-            speaker.start()
+            self._start_locked(speaker_type)
+
+    def _start_locked(self, speaker_type) -> None:
+        self.log("загружаю голоса рас ...")
+        state.report(voices="loading")
+        speaker = speaker_type(self.config, self.log, self.home, self.accentor, self.player)
+        self.f5, self.ready = speaker, False
+        speaker.start()
         threading.Thread(target=self._wait, args=(speaker,), daemon=True, name="f5-wait").start()
 
     def _wait(self, speaker) -> None:
@@ -72,6 +78,13 @@ class Engines:
         with self.lock:
             if self.f5 is not speaker:
                 return                      # unloaded meanwhile
+            if speaker.error is not None and getattr(speaker, "engine_name", "") == "OmniVoice":
+                from .f5engine import F5Speaker
+
+                self.omni_failed = True
+                self.log(f"OmniVoice недоступен: {speaker.error}. Проверяю F5.")
+                self._start_locked(F5Speaker)
+                return
             if speaker.error is not None:
                 self.f5, self.failed_at = None, self.clock()
                 error, missing = speaker.error, getattr(speaker, "models_missing", False)

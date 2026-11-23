@@ -7,11 +7,23 @@ import unittest
 from unittest.mock import Mock, patch
 
 from bv.launcher.model import update_config
-from bv.omni import OmniSpeaker
+from bv.omni import OmniSpeaker, Worker
 from bv.omni_worker import profile_steps
 
 
 class OmniProfile(unittest.TestCase):
+    def test_native_worker_uses_windows_interpreter_and_reference(self):
+        with (tempfile.TemporaryDirectory() as root,
+              patch("bv.omni.omni_runtime.ready", return_value=True),
+              patch("bv.omni.omni_runtime.interpreter", return_value=Path("managed-python.exe")),
+              patch("bv.omni.subprocess.Popen") as launch,
+              patch("bv.omni.threading.Thread")):
+            worker = Worker({}, Path(root))
+        command = launch.call_args.args[0]
+        self.assertEqual(command[0], "managed-python.exe")
+        self.assertEqual(worker.provider, "OmniVoice / CUDA")
+        self.assertEqual(worker.voice_path(r"F:\Voices\ref.wav"), r"F:\Voices\ref.wav")
+
     def test_next_line_uses_saved_profile_without_replacing_worker(self):
         with tempfile.TemporaryDirectory() as root:
             home = Path(root)

@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 >
 > Release dates are the GitHub release's publication date (UTC). Versions before 0.4.0 had no GitHub release: their date is the release commit's, and their tags were set later on those commits.
 
+## [0.5.0] - Unreleased
+
+### Added
+
+- OmniVoice CUDA on Windows
+
+  The installer prepares its runtime and model on NVIDIA. Quality and Balanced can be switched between lines with the model still loaded. If OmniVoice cannot start, the launcher tries F5 and Windows voices.
+
+- Automatic addon installation
+
+  The installer adds Barrens Voice to detected WoW installations where the addon is missing.
+
 ## [0.4.1] - 2026-11-22
 
 ### Added
@@ -383,6 +395,7 @@ The first public release, and the first on GitHub: an installer, updates by them
 
   The addon sends the chat to a companion program on Windows, which reads it aloud with a voice of its own for every player — race voices (F5-TTS) or Windows voices — and a slang dictionary («WTS» — «продам», «дд» — «дамагер»).
 
+[0.5.0]: https://github.com/sokol-rc/barrens-voice/releases/tag/v0.5.0-beta.1
 [0.4.1]: https://github.com/sokol-rc/barrens-voice/releases/tag/v0.4.1
 [0.4.0]: https://github.com/rgeraskin/barrens-voice/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rgeraskin/barrens-voice/compare/v0.2.1...v0.3.0

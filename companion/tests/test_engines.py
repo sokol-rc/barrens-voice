@@ -98,6 +98,35 @@ class EnginesTest(unittest.TestCase):
         return Engines({"engine": "f5", "spoken_notices": True}, self.logged.append, home, self.sapi, None,
                        **({"clock": clock} if clock else {}))
 
+    def test_omnivoice_start_failure_loads_f5(self):
+        fallback_started = threading.Event()
+
+        class FailingOmni(FakeF5):
+            engine_name = "OmniVoice"
+
+            def start(self):
+                self.error = "CUDA unavailable"
+                self.ready.set()
+
+        class FallbackF5(FakeF5):
+            def start(self):
+                super().start()
+                fallback_started.set()
+
+        FakeF5.fail = None
+        engines = self.make()
+        engines.config["race_voice_backend"] = "omnivoice"
+        with (unittest.mock.patch.object(FAKE_F5, "F5Speaker", FallbackF5),
+              unittest.mock.patch.dict(sys.modules, {"bv.omni": types.SimpleNamespace(OmniSpeaker=FailingOmni)})):
+            engines.want("f5")
+            self.assertTrue(fallback_started.wait(2))
+            self.assertIs(type(engines.f5), FallbackF5)
+            self.assertTrue(engines.omni_failed)
+            engines.f5.ready.set()
+            wait()
+        self.assertTrue(engines.ready)
+        self.assertTrue(any("CUDA unavailable" in text for text in self.logged))
+
     def test_load_on_demand_then_unload(self):
         FakeF5.fail = None
         e = self.make()

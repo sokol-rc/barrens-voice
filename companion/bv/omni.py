@@ -1,4 +1,4 @@
-"""Use an already installed OmniVoice environment through the local WSL distribution."""
+"""Use the managed Windows CUDA OmniVoice runtime or an explicitly configured WSL environment."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ import subprocess
 import threading
 from pathlib import Path, PureWindowsPath
 
+from . import omni_runtime
 from .assign import Assigner
 from .f5engine import F5Speaker, make_bank, wav_bytes
 from .omni_worker import profile_steps
@@ -27,15 +28,29 @@ def plain_text(text: str) -> str:
 
 class Worker:
     def __init__(self, config, logdir):
-        distribution = config.get("omnivoice_wsl_distro", "Ubuntu")
-        python = config["omnivoice_wsl_python"]
-        model = config["omnivoice_wsl_model"]
-        script = linux_path(Path(__file__).with_name("omni_worker.py"))
+        python = config.get("omnivoice_wsl_python")
+        model = config.get("omnivoice_wsl_model")
+        script = Path(__file__).with_name("omni_worker.py")
+        if python or model:
+            if not (python and model):
+                raise ValueError("Для OmniVoice в WSL укажи пути к Python и модели")
+            distribution = config.get("omnivoice_wsl_distro", "Ubuntu")
+            command = ["wsl.exe", "-d", distribution, "--exec", python, "-u", linux_path(script), model]
+            self.voice_path = linux_path
+            self.provider = "OmniVoice / CUDA (WSL)"
+            log_name = "omnivoice-wsl.log"
+        else:
+            if not omni_runtime.ready():
+                raise RuntimeError("OmniVoice для Windows CUDA не установлен")
+            command = [str(omni_runtime.interpreter()), "-u", str(script), str(omni_runtime.MODEL_DIR)]
+            self.voice_path = str
+            self.provider = "OmniVoice / CUDA"
+            log_name = "omnivoice.log"
         logdir.mkdir(parents=True, exist_ok=True)
         self.messages = queue.Queue()
-        with (logdir / "omnivoice-wsl.log").open("ab") as log:
+        with (logdir / log_name).open("ab") as log:
             self.process = subprocess.Popen(
-                ["wsl.exe", "-d", distribution, "--exec", python, "-u", script, model],
+                command,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -56,7 +71,7 @@ class Worker:
         except (OSError, ValueError) as error:
             self.messages.put(({"error": str(error)}, b""))
         finally:
-            self.messages.put(({"error": "WSL отключился. Подробности в logs/omnivoice-wsl.log"}, b""))
+            self.messages.put(({"error": "Процесс OmniVoice остановился. Подробности в журнале OmniVoice"}, b""))
 
     def receive(self, timeout: float):
         try:
@@ -71,7 +86,7 @@ class Worker:
     def synth(self, slot, text, rate, profile="quality"):
         import numpy as np
 
-        req = dict(text=text, path=linux_path(slot.path), reference=slot.text,
+        req = dict(text=text, path=self.voice_path(slot.path), reference=slot.text,
                    speed=max(.5, min(2., rate / 100)), profile=profile)
         self.process.stdin.write(json.dumps(req, ensure_ascii=True).encode("ascii") + b"\n")
         self.process.stdin.flush()
@@ -112,26 +127,23 @@ class OmniSpeaker(F5Speaker):
         return self.profile
 
     def _load(self):
-        missing = [key for key in ("omnivoice_wsl_python", "omnivoice_wsl_model") if not self.config.get(key)]
-        if missing:
-            raise ValueError("Не задан путь к установленному OmniVoice в WSL")
         slots = make_bank(self.config, self.home, self.log)
         if not any(slot.race for slot in slots):
             raise RuntimeError("в клиенте игры нет русской озвучки для банка голосов")
         self.assigner = Assigner(slots, self.home / "assignments.json", self.config["players"])
-        self.log("загружаю OmniVoice на CUDA через WSL …")
+        self.log("загружаю OmniVoice на CUDA …")
         worker = self.worker = Worker(self.config, self.home / "logs")
         try:
             if self.stopped.is_set():
                 raise RuntimeError("Загрузка OmniVoice отменена")
             header, _ = worker.receive(180)
             self.card = header["gpu"]
-            self.provider = "OmniVoice / CUDA (WSL)"
+            self.provider = worker.provider
             self.device = self.provider
         except BaseException:
             worker.close()
             raise
-        self.log(f"OmniVoice готов на {self.card} (CUDA через WSL)")
+        self.log(f"{self.provider} готов на {self.card}")
 
     def fastest(self):
         return False
