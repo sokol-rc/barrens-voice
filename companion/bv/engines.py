@@ -56,10 +56,13 @@ class Engines:
             # every frame and chat line asks for F5: a failed load is not started again for each
             if self.failed_at is not None and self.clock() - self.failed_at < RETRY_AFTER:
                 return
-            from .f5engine import F5Speaker
+            if self.config.get("race_voice_backend") == "omnivoice":
+                from .omni import OmniSpeaker as speaker_type
+            else:
+                from .f5engine import F5Speaker as speaker_type
             self.log("загружаю голоса рас ...")
             state.report(voices="loading")
-            speaker = F5Speaker(self.config, self.log, self.home, self.accentor, self.player)
+            speaker = speaker_type(self.config, self.log, self.home, self.accentor, self.player)
             self.f5, self.ready = speaker, False
             speaker.start()
         threading.Thread(target=self._wait, args=(speaker,), daemon=True, name="f5-wait").start()

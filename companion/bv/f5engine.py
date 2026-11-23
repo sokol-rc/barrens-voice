@@ -323,6 +323,8 @@ def silence_after(samples, rate: int) -> float:
 
 
 class F5Speaker:
+    engine_name = "F5-TTS"
+
     def __init__(self, config: dict, log, home: Path, accentor: Accentor | None = None,
                  player: Player | None = None):
         self.config, self.log, self.home = config, log, home
@@ -476,6 +478,9 @@ class F5Speaker:
             self.player.start()
         threading.Thread(target=self._synth_loop, daemon=True, name="f5-synth").start()
 
+    def _prepare_text(self, text: str) -> str:
+        return self.accentor.accent(numbers_to_words(text))
+
     def _synth_loop(self) -> None:
         try:
             self._load()
@@ -500,7 +505,7 @@ class F5Speaker:
                 continue
             # numbers first: RUAccent then stresses the number words too ("шестн+адцать"; F5 left
             # to itself put it on the first syllable in some voices)
-            text = self.accentor.accent(numbers_to_words(line.text))
+            text = self._prepare_text(line.text)
             if text[-1:].isalnum() or text[-1:] == "+":
                 text += "."
             if self.config.get("log_details") and text != line.text:
@@ -524,7 +529,7 @@ class F5Speaker:
                 if self.config.get("debug"):
                     self.log(f"  синтез {time.perf_counter() - started:.2f} с, {duration:.1f} с звука")
             except Exception as e:  # noqa: BLE001 - one bad line must not stop the reader
-                self.log(f"F5-TTS: {e}")
+                self.log(f"{self.engine_name}: {e}")
 
     def _render(self, slot, text, line, generation, trailing_gap):
         import numpy as np

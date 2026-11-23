@@ -43,6 +43,11 @@ DEFAULT_CONFIG = {
     # longer; "whisper" - made again only if Whisper does not hear the last word (1.5 GB of video memory)
     "f5_end_check": "silence",
     "f5_profile": "quality",
+    "race_voice_backend": "f5",
+    "omnivoice_profile": "quality",
+    "omnivoice_wsl_distro": "Ubuntu",
+    "omnivoice_wsl_python": "",
+    "omnivoice_wsl_model": "",
     "f5_prime_output": True,
     "f5_tensorrt_dir": "",
     "f5_tensorrt": False,

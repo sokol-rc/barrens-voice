@@ -981,10 +981,11 @@ class App:
         if self.settings_win is not None and self.settings_win.winfo_exists():
             self.settings_win.lift()
             return
-        width, height = 600, 840
+        cfg = model.read_config()
+        omni = cfg.get("race_voice_backend") == "omnivoice"
+        width, height = 600, 696 if omni else 840
         win, c, p = self._child("Настройки", width, height)
         self.settings_win = win
-        cfg = model.read_config()
         boxes = {}
         # a folder per game (game_dirs, where the launcher also remembers a game it saw running): two games
         # may well be on two disks; shown as found when not set
@@ -1009,10 +1010,14 @@ class App:
                         boxes[k].var.set(os.path.normpath(got))
                 p.button(width - 120, y + 13, width - 30, y + 39, "Выбрать…", f"pick{key}", choose)
             y += 66
-        profiles = {"quality": "Качество", "balanced": "Баланс", "fastest": "Минимальная задержка"}
-        requested_profile = cfg.get("f5_profile")
+        profiles = {"quality": "Качество", "balanced": "Баланс"}
+        if not omni:
+            profiles["fastest"] = "Минимальная задержка"
+        profile_key = "omnivoice_profile" if omni else "f5_profile"
+        requested_profile = cfg.get(profile_key)
         profile = tk.StringVar(win, requested_profile if requested_profile in tuple(profiles) else "quality")
-        c.create_text(30, y + 3, text="Профиль голосов рас", anchor="w", fill=PARCHMENT, font=p.body)
+        c.create_text(30, y + 3, text="Профиль OmniVoice" if omni else "Профиль голосов рас",
+                      anchor="w", fill=PARCHMENT, font=p.body)
         for x, (key, label) in zip((30, 170, 290), profiles.items()):
             choice = tk.Radiobutton(c, text=label, variable=profile, value=key, takefocus=True,
                                     bg="#211309", fg=PARCHMENT, selectcolor="#120a05",
@@ -1027,29 +1032,34 @@ class App:
             c.delete(key)
             p.check(30, y, label, flags[key], key,
                     lambda: (flags.__setitem__(key, not flags[key]), draw_check(key, y, label)))
-        draw_check("trt", y + 6, "TensorRT для NVIDIA в быстрых профилях (скачает 1,8 ГиБ)")
-        y += 38
+        if not omni:
+            draw_check("trt", y + 6, "TensorRT для NVIDIA в быстрых профилях (скачает 1,8 ГиБ)")
+            y += 38
         draw_check("details", y + 6, "Подробный журнал: как строка написана и как прочитана")
-        draw_check("whisper", y + 44, "Проверять концовки фраз распознаванием речи (Whisper)")
-        c.create_text(56, y + 64, anchor="nw", fill=DIM, font=p.small, width=width - 86,
-                      text="Изредка голос расы не успевает договорить последний слог. Выключено: фраза, "
-                           "договорённая впритык (примерно каждая восьмая), синтезируется ещё раз — на секунду "
-                           "дольше. Включено: Whisper сначала слушает её конец и переделывает только при обрыве, "
-                           "но занимает около 1,5 ГБ видеопамяти и пару секунд при загрузке голосов.")
-        draw_check("auto", y + 150, "Обновлять автоматически")
+        y += 38
+        if not omni:
+            draw_check("whisper", y + 6, "Проверять концовки фраз распознаванием речи (Whisper)")
+            c.create_text(56, y + 26, anchor="nw", fill=DIM, font=p.small, width=width - 86,
+                          text="Изредка голос расы не успевает договорить последний слог. Выключено: фраза, "
+                               "договорённая впритык (примерно каждая восьмая), синтезируется ещё раз — на секунду "
+                               "дольше. Включено: Whisper сначала слушает её конец и переделывает только при обрыве, "
+                               "но занимает около 1,5 ГБ видеопамяти и пару секунд при загрузке голосов.")
+            y += 106
+        draw_check("auto", y + 6, "Обновлять автоматически")
         p.tips["auto"] = ("Новая версия скачивается и готовится сама и включается, когда игра и озвучка не запущены.\n\n"
                           "Выключено — внизу окна появится «Вышла версия…» с кнопкой «Обновить».")
-        draw_check("beta", y + 178, "Получать тестовые версии")
+        draw_check("beta", y + 34, "Получать тестовые версии")
         p.tips["beta"] = ("Тестовые версии выходят раньше и могут быть с ошибками — для тех, кто готов проверять "
                           "сборки и писать о найденном.\n\nВыключишь — останешься на тестовой, пока не выйдет "
                           "стабильная новее.")
         lead = "Остальное — в config.json:"
-        c.create_text(30, y + 216, anchor="w", fill=DIM, font=p.small, text=lead)
+        c.create_text(30, y + 72, anchor="w", fill=DIM, font=p.small, text=lead)
         doc_tag = release_tag(self.version) if INSTALL_DIR is not None and self.version != "?" else "master"
-        p.link(30 + p.measure(lead, p.small) + 6, y + 216, "описание настроек", "configdoc",
+        p.link(30 + p.measure(lead, p.small) + 6, y + 72, "описание настроек", "configdoc",
                lambda: webbrowser.open(f"https://github.com/{model.REPO}/blob/{doc_tag}/docs/config.md"))
-        c.create_text(30, y + 236, anchor="w", fill=DIM, font=p.small,
-                      text="Если озвучка работает, после сохранения она перезапустится.")
+        c.create_text(30, y + 92, anchor="w", fill=DIM, font=p.small,
+                      text="Профиль OmniVoice применяется со следующей реплики." if omni
+                      else "Если озвучка работает, после сохранения она перезапустится.")
 
         def edited():
             """The settings as the window has them now; None if the days are not a number."""
@@ -1069,10 +1079,12 @@ class App:
                     game_dirs.pop(game, None)
             changes["game_dirs"] = game_dirs
             changes.update(log_keep_days=days, log_details=flags["details"],
-                           f5_profile=profile.get(), f5_tensorrt=flags["trt"],
                            auto_update=flags["auto"], update_channel="beta" if flags["beta"] else "stable")
-            if flags["whisper"] != (cfg.get("f5_end_check") == "whisper"):
-                changes["f5_end_check"] = "whisper" if flags["whisper"] else "silence"
+            changes[profile_key] = profile.get()
+            if not omni:
+                changes["f5_tensorrt"] = flags["trt"]
+                if flags["whisper"] != (cfg.get("f5_end_check") == "whisper"):
+                    changes["f5_end_check"] = "whisper" if flags["whisper"] else "silence"
             return changes
 
         def differs(changes: dict) -> bool:
@@ -1104,7 +1116,7 @@ class App:
             if changed:
                 self.say("настройки сохранены")
                 self.update_settings_changed(before, changes)
-                own = {k: v for k, v in changes.items() if k not in ("auto_update", "update_channel")}
+                own = {k: v for k, v in changes.items() if k not in ("auto_update", "update_channel", "omnivoice_profile")}
                 if self.companion.running and differs(own):     # the update settings are the launcher's own
                     self.restart_companion(["--no-launch"])
             self.redraw()
