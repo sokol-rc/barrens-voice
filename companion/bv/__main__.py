@@ -543,7 +543,7 @@ def fetch_models(config: dict) -> int:
         log("модели: ударения (~0,7 ГБ) ...")
         Accentor(log, True).load()
     except Exception as e:  # noqa: BLE001 - the first start tries again
-        log("модели не скачались — докачаются при первом запуске")
+        log("не удалось скачать модели")
         log(f"    {e}")
         return 1
     log("модели скачаны")

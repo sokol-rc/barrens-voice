@@ -64,6 +64,7 @@ class OnnxChecker:
             self.encoder = ort.InferenceSession(paths["onnx/encoder_model_fp16.onnx"], options, providers=providers)
             on_card(self.encoder, self.provider)            # not quietly on the processor: the bank would take ages
             self.decoder = ort.InferenceSession(paths["onnx/decoder_model_fp16.onnx"], options, providers=providers)
+            on_card(self.decoder, self.provider)
             self.feature_type = np.float16 if "float16" in self.encoder.get_inputs()[0].type else np.float32
             return True
         except Exception as e:  # noqa: BLE001 - reported; the bank cannot be made without it

@@ -37,7 +37,7 @@ SolidCompression=yes
 WizardStyle=modern
 ShowLanguageDialog=no
 SetupLogging=yes
-ExtraDiskSpaceRequired=12884901888
+ExtraDiskSpaceRequired=16106127360
 ; Setup and Uninstall wait while the launcher or the companion runs (their named mutexes, bv/launcher/app.py
 ; and bv/__main__.py, "Local\": this session's): installing over a running version fails in uv sync or the switch
 AppMutex={code:AppMutexName}
@@ -46,7 +46,7 @@ AppMutex={code:AppMutexName}
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Messages]
-ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе с моделями. Нужны NVIDIA с CUDA 12.8, интернет и 12 ГиБ свободного места.
+ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе с моделями. Нужны NVIDIA с CUDA 12.8, интернет и 15 ГиБ свободного места.
 
 [Tasks]
 Name: "desktopicon"; Description: "Значок на рабочем столе"
@@ -60,8 +60,8 @@ Source: "..\dist\Barrens Voice.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\barrens-voice-{#AppVersion}.zip"; DestDir: "{app}\setup"; Flags: ignoreversion
 
 [Run]
-Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --install-addons"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Устанавливаю аддон в найденные папки WoW…"; Flags: waituntilterminated; Check: not IsStaging
-Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Description: "Запустить Barrens Voice Launcher"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --install-addons"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Устанавливаю аддон в найденные папки WoW…"; Flags: waituntilterminated; Check: not IsStaging and SetupSucceeded
+Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Description: "Запустить Barrens Voice Launcher"; Flags: postinstall nowait skipifsilent; Check: SetupSucceeded
 
 [Icons]
 Name: "{userprograms}\Barrens Voice"; Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Check: not IsStaging
@@ -86,8 +86,32 @@ Type: filesandordirs; Name: "{app}\setup"
 Type: files; Name: "{app}\barrens-voice.install"
 
 [Code]
+var
+  SetupError: String;
+
 function SetEnvironmentVariable(Name, Value: String): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+function SetupSucceeded: Boolean;
+begin
+  Result := SetupError = '';
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := 0;
+  if not SetupSucceeded then
+    Result := 20;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and not SetupSucceeded then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := 'Не удалось установить Barrens Voice';
+    WizardForm.FinishedLabel.Caption := SetupError;
+  end;
+end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
@@ -104,10 +128,13 @@ begin
   SetEnvironmentVariable('PYTHONUTF8', '1');
   Params := 'run --no-project --python 3.13 "' + App + '\setup\setup_omni.py" --root "' + App +
     '" --archive "' + App + '\setup\barrens-voice-{#AppVersion}.zip"';
-  if not ExecAndLogOutput(App + '\uv.exe', Params, App, SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode, nil) or
-     (ResultCode <> 0) then
-    RaiseException('Не удалось подготовить OmniVoice. Проверьте драйвер NVIDIA, интернет и свободное место.' + #13#10 +
-                   'Журнал установки: ' + ExpandConstant('{log}'));
+  SetupError := 'Не удалось подготовить OmniVoice. Проверьте драйвер NVIDIA, интернет и свободное место.' + #13#10 +
+                'Журнал установки: ' + ExpandConstant('{log}');
+  if ExecAndLogOutput(App + '\uv.exe', Params, App, SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode, nil) and
+     (ResultCode = 0) then
+    SetupError := ''
+  else
+    Log(SetupError);
 end;
 
 function IsStaging: Boolean;
