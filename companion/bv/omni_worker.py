@@ -24,7 +24,9 @@ def run(model_path):
             requests.put(raw)
         os._exit(0)
 
-    threading.Thread(target=read_requests, daemon=True, name="windows-stdin").start()
+    reader = threading.Thread(target=read_requests, daemon=True, name="windows-stdin")
+    if os.name != "nt":
+        reader.start()
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     pipe = sys.stdout.buffer
@@ -38,6 +40,9 @@ def run(model_path):
         import torch
         from omnivoice import OmniVoice
 
+        # The Windows NumPy DLL can hang during import if a thread is already reading a pipe.
+        if os.name == "nt":
+            reader.start()
         torch.set_num_threads(2)
         if not torch.cuda.is_available():
             raise RuntimeError("В WSL недоступна CUDA")
