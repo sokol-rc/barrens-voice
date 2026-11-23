@@ -127,6 +127,25 @@ class EnginesTest(unittest.TestCase):
         self.assertTrue(engines.ready)
         self.assertTrue(any("CUDA unavailable" in text for text in self.logged))
 
+    def test_native_omnivoice_failure_uses_windows_voices_without_f5(self):
+        class FailingOmni(FakeF5):
+            engine_name = "OmniVoice"
+
+            def start(self):
+                self.error = "CUDA unavailable"
+                self.ready.set()
+
+        engines = self.make()
+        engines.config["race_voice_backend"] = "f5"  # older config.json
+        line = Line("say", "Орк", "Orc", "2", "", "", "текст", 100, "f5")
+        with (unittest.mock.patch("bv.omni_runtime.native_only", return_value=True),
+              unittest.mock.patch.object(FAKE_F5, "F5Speaker", side_effect=AssertionError("F5 was loaded")),
+              unittest.mock.patch.dict(sys.modules, {"bv.omni": types.SimpleNamespace(OmniSpeaker=FailingOmni)})):
+            engines.want("f5")
+            wait()
+            self.assertIs(engines.for_line(line), self.sapi)
+        self.assertTrue(any("CUDA unavailable" in text for text in self.logged))
+
     def test_load_on_demand_then_unload(self):
         FakeF5.fail = None
         e = self.make()

@@ -28,6 +28,10 @@ def main() -> int:
     if sys.platform == "win32" and importlib.util.find_spec("sounddevice") is None:
         print("sounddevice не установлен: звуку не на чем играть", file=sys.stderr)
         return 1
+    from bv import omni_runtime
+    if omni_runtime.native_only() and not omni_runtime.ready():
+        print("Для перехода на OmniVoice / CUDA запусти BarrensVoice-Setup.exe из выпуска на GitHub.", file=sys.stderr)
+        return 1
     return 0
 
 

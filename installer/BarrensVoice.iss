@@ -1,6 +1,6 @@
 ; Barrens Voice's installer (Inno Setup 6): `mise run installer` builds it on Windows (tools/installer.py).
 ; Small by design: uv.exe, bv/install.py and the release archive. What is large comes from the network
-; while installing: Python and the libraries through uv (from uv.lock), the models (bv --fetch-models).
+; while installing: Python and libraries through uv, plus the models for OmniVoice and the voice bank.
 ; Layout and updates: docs/update-strategy.md.
 
 #ifndef AppVersion
@@ -36,8 +36,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ShowLanguageDialog=no
-; Minimum for the ONNX installation. The optional OmniVoice package needs additional space.
-ExtraDiskSpaceRequired=6442450944
+SetupLogging=yes
+ExtraDiskSpaceRequired=12884901888
 ; Setup and Uninstall wait while the launcher or the companion runs (their named mutexes, bv/launcher/app.py
 ; and bv/__main__.py, "Local\": this session's): installing over a running version fails in uv sync or the switch
 AppMutex={code:AppMutexName}
@@ -46,28 +46,21 @@ AppMutex={code:AppMutexName}
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Messages]
-ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе с моделями и библиотеками. Для установки с OmniVoice на NVIDIA рекомендуется 18 ГБ свободного места.
+ru.SelectDirLabel3=Barrens Voice установится в эту папку вместе с моделями. Нужны NVIDIA с CUDA 12.8, интернет и 12 ГиБ свободного места.
 
 [Tasks]
 Name: "desktopicon"; Description: "Значок на рабочем столе"
-Name: "tensorrt"; Description: "Скачать TensorRT для быстрых профилей на NVIDIA (1,8 ГиБ)"; Flags: unchecked
 
 [Files]
 Source: "..\dist\uv.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\companion\bv\install.py"; DestDir: "{app}\setup"; Flags: ignoreversion
+Source: "..\companion\bv\setup_omni.py"; DestDir: "{app}\setup"; Flags: ignoreversion
 ; the starter a player finds in the folder, with the app's icon; the shortcuts and the sign-in go through it
 Source: "..\dist\Barrens Voice.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\barrens-voice-{#AppVersion}.zip"; DestDir: "{app}\setup"; Flags: ignoreversion
 
 [Run]
-; Python and the libraries: uv's own Python runs install.py, which builds app\{#AppVersion} from its uv.lock.
-; set "VAR=value": the folder quoted, so a "&" in it does not end the command
-Filename: "{cmd}"; Parameters: "/c ""set ""UV_PYTHON_INSTALL_DIR={app}\python""&& set ""UV_CACHE_DIR={app}\cache\uv""&& set ""UV_PYTHON_PREFERENCE=only-managed""&& ""{app}\uv.exe"" run --no-project --python 3.13 ""{app}\setup\install.py"" --root ""{app}"" --archive ""{app}\setup\barrens-voice-{#AppVersion}.zip"" """; StatusMsg: "Скачиваю Python и библиотеки (0,6–2,5 ГБ, несколько минут)…"; Flags: waituntilterminated
-; the models now, not at the first start (~3 GB once)
-Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --fetch-models"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Скачиваю модели голосов (около 3 ГБ)…"; Flags: waituntilterminated
-Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --prepare-omnivoice"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Готовлю OmniVoice для NVIDIA (несколько ГБ, подождите)…"; Flags: waituntilterminated
 Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv --install-addons"; WorkingDir: "{app}\app\current\companion"; StatusMsg: "Устанавливаю аддон в найденные папки WoW…"; Flags: waituntilterminated; Check: not IsStaging
-Filename: "{app}\app\current\.venv\Scripts\python.exe"; Parameters: "-m bv.trt_runtime"; WorkingDir: "{app}\app\current\companion"; Tasks: tensorrt; StatusMsg: "Скачиваю библиотеки TensorRT…"; Flags: waituntilterminated
 Filename: "{app}\Barrens Voice.exe"; WorkingDir: "{app}"; Description: "Запустить Barrens Voice Launcher"; Flags: postinstall nowait skipifsilent
 
 [Icons]
@@ -93,6 +86,30 @@ Type: filesandordirs; Name: "{app}\setup"
 Type: files; Name: "{app}\barrens-voice.install"
 
 [Code]
+function SetEnvironmentVariable(Name, Value: String): Boolean;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  App, Params: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  App := ExpandConstant('{app}');
+  WizardForm.StatusLabel.Caption := 'Скачиваю OmniVoice и готовлю CUDA. Это может занять несколько минут…';
+  SetEnvironmentVariable('UV_PYTHON_INSTALL_DIR', App + '\python');
+  SetEnvironmentVariable('UV_CACHE_DIR', App + '\cache\uv');
+  SetEnvironmentVariable('UV_PYTHON_PREFERENCE', 'only-managed');
+  SetEnvironmentVariable('PYTHONUTF8', '1');
+  Params := 'run --no-project --python 3.13 "' + App + '\setup\setup_omni.py" --root "' + App +
+    '" --archive "' + App + '\setup\barrens-voice-{#AppVersion}.zip"';
+  if not ExecAndLogOutput(App + '\uv.exe', Params, App, SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode, nil) or
+     (ResultCode <> 0) then
+    RaiseException('Не удалось подготовить OmniVoice. Проверьте драйвер NVIDIA, интернет и свободное место.' + #13#10 +
+                   'Журнал установки: ' + ExpandConstant('{log}'));
+end;
+
 function IsStaging: Boolean;
 begin
   Result := ExpandConstant('{param:STAGING|0}') = '1';
@@ -116,7 +133,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
-    if MsgBox('Удалить и настройки, банк голосов и скачанные модели (около 3 ГБ)?' + #13#10 +
+    if MsgBox('Удалить и настройки, банк голосов и скачанные модели?' + #13#10 +
               'Нет — они останутся и пригодятся, если поставить Barrens Voice снова.',
               mbConfirmation, MB_YESNO) = IDYES then
     begin

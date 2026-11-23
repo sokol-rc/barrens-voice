@@ -797,6 +797,20 @@ class Install(unittest.TestCase):
             self.assertEqual(install.prune(root, keep=1), ["0.4.0"])                   # links are never pruned
             self.assertTrue((root / "app" / "0.4.1").is_dir())
 
+    def test_failed_omnivoice_preparation_keeps_current_install(self):
+        import subprocess
+        from unittest import mock
+        from bv import install, setup_omni
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            uv = root / "uv.exe"
+            with mock.patch("bv.install.build", side_effect=built):
+                install.install(root, self.release(root, "0.4.1"), "directml", uv)
+                with (mock.patch("bv.setup_omni.subprocess.run", side_effect=subprocess.CalledProcessError(1, "bv")),
+                      self.assertRaises(subprocess.CalledProcessError)):
+                    setup_omni.prepare(root, self.release(root, "0.5.0"))
+            self.assertEqual(install.current_version(root), "0.4.1")
+            self.assertEqual(install.runtime_of(root), "directml")
 
     def test_prune_never_takes_a_newer_version(self):
         # by number alone a refused test build left on disk (newer) kept itself and pruned the prepared version

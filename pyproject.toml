@@ -37,10 +37,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# ONNX Runtime for the video card: one of the two (the same Python module, onnxruntime)
+# The NVIDIA installer uses ONNX for Whisper/RUAccent only. Whisper reuses PyTorch's CUDA 12 DLLs.
 cuda = [
-    "onnxruntime-gpu[cuda,cudnn]==1.32.0 ; sys_platform == 'win32'",
-    "onnx==1.23.2 ; sys_platform == 'win32'",  # export a reduced Euler schedule on first opt-in
+    "onnxruntime-gpu==1.26.0 ; sys_platform == 'win32'",
 ]
 directml = ["onnxruntime-directml==1.24.4 ; sys_platform == 'win32'"]
 
@@ -50,9 +49,5 @@ conflicts = [[{ extra = "cuda" }, { extra = "directml" }]]
 # RUAccent asks for the CPU-only onnxruntime, which would sit over the video card's build under the
 # same module name: on Windows the extra's build is the one (elsewhere - the tests - the CPU one stays)
 override-dependencies = ["onnxruntime ; sys_platform != 'win32'"]
-# a package version reaches the lock a week after its release, not the day it appears on PyPI (a
-# hijacked release is usually caught within days); an urgent fix: exclude-newer-package
+# a package version reaches the lock a week after its release
 exclude-newer = "7 days"
-# onnxruntime-gpu 1.32.0 (13.11.2026) is the build the CUDA path was measured with on the test machine:
-# allowed before its week is up; drop this line after 20.11.2026
-exclude-newer-package = { onnxruntime-gpu = false }

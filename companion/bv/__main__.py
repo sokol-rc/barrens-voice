@@ -15,7 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import protocol
+from . import omni_runtime, protocol
 from .paths import CACHE_DIR, DATA_DIR      # the data's folder, apart from the code's (bv/paths.py)
 
 CONFIG_PATH = DATA_DIR / "config.json"
@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     "f5_end_check": "silence",
     "f5_profile": "quality",
     "race_voice_backend": "auto",
-    "omnivoice_profile": "quality",
+    "omnivoice_profile": "balanced" if omni_runtime.native_only() else "quality",
     "omnivoice_wsl_distro": "Ubuntu",
     "omnivoice_wsl_python": "",
     "omnivoice_wsl_model": "",
@@ -523,20 +523,20 @@ class Lines:
 
 
 def fetch_models(config: dict) -> int:
-    """Everything the race voices need from the network, downloaded now - BarrensVoice.cmd runs this
-    right after installing, so the first start neither waits for ~3 GB nor needs the network: F5 in
-    ONNX and its vocabulary, Whisper (it builds the voice bank from the game's files), RUAccent.
-    Models already in the cache are not downloaded again."""
+    """Cache Whisper for voice-bank generation and RUAccent, plus F5 in the legacy build."""
     os.environ.setdefault("HF_HUB_VERBOSITY", "error")     # no "unauthenticated requests" notice; bars stay
     from huggingface_hub import hf_hub_download
 
-    from . import f5engine, whisper_onnx
+    from . import whisper_onnx
     from .text import Accentor
     try:
-        log("модели: голоса рас (~0,8 ГБ) ...")
-        if f5engine.model_dir(config, DATA_DIR) is None:
-            f5engine.fetch_models(config, log)
-        hf_hub_download(f5engine.MODEL_REPO, f5engine.VOCAB_FILE)
+        if not omni_runtime.native_only():
+            from . import f5engine
+
+            log("модели: голоса рас (~0,8 ГБ) ...")
+            if f5engine.model_dir(config, DATA_DIR) is None:
+                f5engine.fetch_models(config, log)
+            hf_hub_download(f5engine.MODEL_REPO, f5engine.VOCAB_FILE)
         log("модели: распознавание речи для банка голосов (~1,5 ГБ) ...")
         for name in whisper_onnx.FILES:
             hf_hub_download(whisper_onnx.REPO, name)
@@ -615,12 +615,13 @@ def main() -> int:
     if "--fetch-models" in sys.argv:
         return fetch_models(config)
     if "--prepare-omnivoice" in sys.argv:
-        from .omni_runtime import prepare
         try:
-            prepare(log)
-        except Exception as error:  # optional GPU runtime: the installed ONNX and Windows voices still work
-            log(f"OmniVoice не удалось установить: {error}. Доступны F5 и голоса Windows.", "WARN")
-        return 0
+            if not omni_runtime.prepare(log):
+                raise RuntimeError("для установки OmniVoice нужен драйвер NVIDIA с CUDA 12.8")
+        except Exception as error:  # the installer must report a failure rather than advertise working CUDA
+            log(f"OmniVoice не удалось установить: {error}", "ERROR")
+            return 1
+        return fetch_models(config)
     if "--install-addons" in sys.argv:
         from .launcher import model
         source = model.addon_source()

@@ -78,7 +78,8 @@ class Engines:
         with self.lock:
             if self.f5 is not speaker:
                 return                      # unloaded meanwhile
-            if speaker.error is not None and getattr(speaker, "engine_name", "") == "OmniVoice":
+            from .omni_runtime import native_only
+            if speaker.error is not None and getattr(speaker, "engine_name", "") == "OmniVoice" and not native_only():
                 from .f5engine import F5Speaker
 
                 self.omni_failed = True

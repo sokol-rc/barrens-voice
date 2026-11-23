@@ -31,7 +31,7 @@ class Worker:
         python = config.get("omnivoice_wsl_python")
         model = config.get("omnivoice_wsl_model")
         script = Path(__file__).with_name("omni_worker.py")
-        if python or model:
+        if (python or model) and not (omni_runtime.native_only() and omni_runtime.ready()):
             if not (python and model):
                 raise ValueError("Для OmniVoice в WSL укажи пути к Python и модели")
             distribution = config.get("omnivoice_wsl_distro", "Ubuntu")

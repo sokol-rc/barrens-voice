@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +29,12 @@ def interpreter() -> Path:
     return environment() / "Scripts" / "python.exe"
 
 
+def native_only() -> bool:
+    from .install import runtime_of
+
+    return INSTALL_DIR is not None and runtime_of(INSTALL_DIR) == "cuda"
+
+
 def ready() -> bool:
     if INSTALL_DIR is None or not (PROJECT / "uv.lock").is_file():
         return False
@@ -39,22 +44,32 @@ def ready() -> bool:
 
 def selected(config: dict) -> bool:
     backend = config.get("race_voice_backend", "auto")
-    return backend == "omnivoice" or (backend == "auto" and ready())
+    return native_only() or backend == "omnivoice" or (backend == "auto" and ready())
+
+
+@lru_cache(maxsize=1)
+def preload_whisper_cuda():
+    """Share the locked PyTorch wheel's CUDA/cuDNN libraries with ONNX in the companion process."""
+    import os
+    import onnxruntime as ort
+
+    directory = environment() / "Lib" / "site-packages" / "torch" / "lib"
+    handle = os.add_dll_directory(str(directory))
+    try:
+        ort.preload_dlls(directory=str(directory))
+    except BaseException:
+        handle.close()
+        raise
+    return handle  # keep DLL lookup active for cuDNN kernels loaded on demand
 
 
 def prepare(log) -> bool:
-    """Install the pinned runtime and model once. Expose them to Auto only after the GPU probe passes."""
+    """Install the pinned runtime and model once, then verify the CUDA device."""
     from .install import runtime_of, uv_env
 
     if INSTALL_DIR is None or runtime_of(INSTALL_DIR) != "cuda":
         return False
-    if ready():
-        log("OmniVoice для Windows CUDA уже подготовлен.")
-        return True
-    if shutil.disk_usage(INSTALL_DIR).free < 11 * 1024**3:
-        log("Для установки OmniVoice нужно 11 ГиБ свободного места после установки F5. Доступны F5 и голоса Windows.")
-        return False
-
+    prepared = ready()
     env = uv_env(INSTALL_DIR, PROJECT)
     env["UV_PROJECT_ENVIRONMENT"] = str(environment())
     log("устанавливаю OmniVoice для Windows CUDA …")
@@ -63,6 +78,9 @@ def prepare(log) -> bool:
     subprocess.run([str(interpreter()), "-c",
                     "import torch, torchaudio; torch.ones(1, device='cuda'); print(torch.cuda.get_device_name())"],
                    check=True, timeout=120)
+    if prepared:
+        log("OmniVoice для Windows CUDA уже подготовлен.")
+        return True
 
     from huggingface_hub import snapshot_download
 

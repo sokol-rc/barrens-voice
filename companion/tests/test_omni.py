@@ -6,12 +6,23 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from bv import __main__, whisper_onnx
 from bv.launcher.model import update_config
 from bv.omni import OmniSpeaker, Worker
 from bv.omni_worker import profile_steps
 
 
 class OmniProfile(unittest.TestCase):
+    def test_native_install_only_fetches_whisper_and_accent_models(self):
+        with (patch("bv.omni_runtime.native_only", return_value=True),
+              patch("huggingface_hub.hf_hub_download") as fetch,
+              patch("bv.text.Accentor") as accent,
+              patch("bv.__main__.log")):
+            self.assertEqual(__main__.fetch_models({}), 0)
+        self.assertEqual([c.args for c in fetch.call_args_list],
+                         [(whisper_onnx.REPO, name) for name in whisper_onnx.FILES])
+        accent.return_value.load.assert_called_once_with()
+
     def test_native_worker_uses_windows_interpreter_and_reference(self):
         with (tempfile.TemporaryDirectory() as root,
               patch("bv.omni.omni_runtime.ready", return_value=True),

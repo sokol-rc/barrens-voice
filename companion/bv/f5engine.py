@@ -215,11 +215,16 @@ def make_bank(config: dict, home: Path, log) -> list:
     out = gamevoices.bank_dir(config, home)
     checker = None
     if gamevoices.stale(config, out):
-        from . import state
+        from . import omni_runtime, state
         state.report(voices="bank")
         from .whisper_onnx import OnnxChecker
-        preload(provider(config))
-        checker = OnnxChecker(log, provider(config))
+        if omni_runtime.native_only() and omni_runtime.ready():
+            engine = "CUDAExecutionProvider"
+            omni_runtime.preload_whisper_cuda()
+        else:
+            engine = provider(config)
+            preload(engine)
+        checker = OnnxChecker(log, engine)
         if not checker.load():
             checker = None
     try:
@@ -239,9 +244,15 @@ def prepare_voices(config: dict, home: Path, log) -> None:
     try:
         if not gamevoices.stale(config, gamevoices.bank_dir(config, home)):
             return
-        import onnxruntime
-        if provider(config) not in onnxruntime.get_available_providers() or provider(config) == "CPUExecutionProvider":
-            return
+        from . import omni_runtime
+        if omni_runtime.native_only():
+            if not omni_runtime.ready():
+                return
+        else:
+            import onnxruntime
+            engine = provider(config)
+            if engine not in onnxruntime.get_available_providers() or engine == "CPUExecutionProvider":
+                return
         log("игра запустится, когда соберутся голоса рас")
         make_bank(config, home, log)
     except ImportError:

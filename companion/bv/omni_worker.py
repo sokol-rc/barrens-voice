@@ -45,7 +45,7 @@ def run(model_path):
             reader.start()
         torch.set_num_threads(2)
         if not torch.cuda.is_available():
-            raise RuntimeError("В WSL недоступна CUDA")
+            raise RuntimeError("CUDA недоступна для OmniVoice")
         model = OmniVoice.from_pretrained(model_path, device_map="cuda:0", dtype=torch.float16)
 
         @functools.lru_cache(maxsize=24)
