@@ -72,18 +72,23 @@ def prepare(log) -> bool:
     prepared = ready()
     env = uv_env(INSTALL_DIR, PROJECT)
     env["UV_PROJECT_ENVIRONMENT"] = str(environment())
+    print("BV_SETUP: cuda", flush=True)
     log("устанавливаю OmniVoice для Windows CUDA …")
     subprocess.run([str(INSTALL_DIR / "uv.exe"), "sync", "--frozen", "--no-dev", "--project", str(PROJECT),
                     "--python", "3.12"], env=env, check=True)
-    subprocess.run([str(interpreter()), "-c",
-                    "import torch, torchaudio; torch.ones(1, device='cuda'); print(torch.cuda.get_device_name())"],
-                   check=True, timeout=120)
+    try:
+        subprocess.run([str(interpreter()), str(Path(__file__).with_name("omni_worker.py")), "--probe"],
+                       check=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        print("BV_SETUP: cuda-error", flush=True)
+        raise RuntimeError("Проверка CUDA FP16 не прошла. Проверь драйвер NVIDIA и доступную видеопамять.") from error
     if prepared:
         log("OmniVoice для Windows CUDA уже подготовлен.")
         return True
 
     from huggingface_hub import snapshot_download
 
+    print("BV_SETUP: model", flush=True)
     log("скачиваю модель OmniVoice …")
     snapshot_download(MODEL_REPO, revision=MODEL_REVISION, allow_patterns=MODEL_FILES, local_dir=MODEL_DIR)
     missing = [name for name in MODEL_FILES if not (MODEL_DIR / name).is_file()]

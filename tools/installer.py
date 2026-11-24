@@ -51,7 +51,7 @@ def launcher_exe() -> Path:
     if csc is None:
         sys.exit("csc.exe (.NET Framework 4) not found")
     out = DIST / "Barrens Voice.exe"
-    subprocess.run([csc, "/nologo", "/target:winexe", "/optimize+", f"/win32icon:{ROOT / 'companion' / 'bv' / 'launcher' / 'icon.ico'}",
+    subprocess.run([csc, "/nologo", "/target:winexe", "/platform:x64", "/optimize+", f"/win32icon:{ROOT / 'companion' / 'bv' / 'launcher' / 'icon.ico'}",
                     f"/out:{out}", "/r:System.Windows.Forms.dll", "/r:System.Core.dll", str(ROOT / "installer" / "launcher.cs")],
                    check=True)
     print(f"{out.name}: {out.stat().st_size / 1e3:.0f} kB")

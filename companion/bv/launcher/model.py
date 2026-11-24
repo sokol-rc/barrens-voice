@@ -71,7 +71,7 @@ SKIP = ("*.md", "._*")      # notes for the repository, macOS copy litter: not f
 GENERATED = ("VoiceList.lua", "CompanionStatus.lua", "DictionaryOnline.lua", "NewsData.lua")
 
 
-def install_addon(source: Path, game_root: Path) -> Path:
+def install_addon(source: Path, game_root: Path, *, preserve_extra: bool = False) -> Path:
     """Put the addon into the game's Interface/AddOns as `source` has it: copied over the old one, and
     what the old one had and this one does not removed (the player's settings live in WTF, not here).
     Returns the addon's folder in the game."""
@@ -80,6 +80,8 @@ def install_addon(source: Path, game_root: Path) -> Path:
     kept = [name for name in GENERATED if (target / name).is_file()]
     shutil.copytree(source, target, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(*SKIP, *kept))
+    if preserve_extra:
+        return target
     wanted = {p.relative_to(source) for p in source.rglob("*")
               if not any(p.match(pattern) for pattern in SKIP)}
     for path in sorted(target.rglob("*"), key=lambda p: len(p.parts), reverse=True):   # files before their folders
@@ -305,12 +307,16 @@ def describe(state: dict, running: bool, exit_code: int | None, game: str | None
     engine = state.get("provider", "")
     if state.get("f5_steps"):
         engine += f" · {state['f5_steps']} шагов"
+    error_text = ("Проверь устройство вывода Windows и повтори проверку" if
+                  str(state.get("voices_error", "")).startswith("Не удалось открыть аудиовыход Windows") else
+                  "Голоса рас недоступны — читаю голосами Windows")
     third = {
-        "bank": (YELLOW, "Голоса рас: собираю банк из файлов игры…"),
+        "bank": (YELLOW, "Голоса рас: готовлю образцы из WoW" + state.get("bank_progress", "…")),
         "loading": (YELLOW, "Голоса рас загружаются…"),
+        "warming": (YELLOW, "Проверяю CUDA и звуковое устройство…"),
         "tensorrt": (YELLOW, "Голоса рас: подготовка библиотек TensorRT…"),
         "ready": (GREEN, "Голоса рас готовы" + (f" — {engine}" if engine else (f" — {state['device']}" if state.get("device") else ""))),
-        "error": (RED, "Голоса рас недоступны — читаю голосами Windows"),
+        "error": (RED, error_text),
         "off": (GREY, "Голоса рас выключены: в аддоне выбраны голоса Windows"),
     }.get(voices, (GREY, "Голоса рас: ещё не загружены"))
 

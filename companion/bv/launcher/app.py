@@ -202,15 +202,15 @@ class App:
     # --- the companion --------------------------------------------------------------------------
 
     def start_on_open(self) -> None:
-        """The companion (and the race voices in video memory) only with the game: started at the window's
-        start when the game runs or the launcher starts it («Запускать игру вместе с лаунчером», opened by hand);
-        else when it appears (tick) or on «Играть». Not the game after an update's restart (--updated): the player
-        did not ask to play, and may just have closed it."""
+        """Warm the native voices when opened by hand. Tray and update launches wait for the game."""
         updated = self.args.get("updated")
+        from ..omni_runtime import native_only
         if self.running_game:
             self.start_companion(["--no-launch"] if updated else None)
         elif self.config.get("launch_wow") and not updated and not self.resident:
             self.start_companion()             # by hand only: the start with Windows never launches the game
+        elif not updated and not self.resident and native_only() and self.selected and not self.addon_missing():
+            self.start_companion(["--no-launch"])
         else:
             self.say("ждёт игру: «Играть» или запуск из Battle.net")
 
@@ -436,6 +436,9 @@ class App:
     def play(self) -> None:
         if self.busy or (getattr(self, "launching", None) and not self.running_game):   # «Игра запускается…»
             return
+        if self.companion.running and self.companion.state().get("voices") == "error":
+            self.restart_companion(["--no-launch"])
+            return
         if self.running_game:                      # the game runs, the companion not (it stopped): voices back on
             if not self.companion.running and not self.start_companion(["--no-launch"]) \
                     and getattr(self, "config_error", None) is not None:
@@ -443,7 +446,7 @@ class App:
             return
         g = self.game(self.selected)
         if g is None:
-            self.say("игра не найдена: укажи её папку в «Настройках»", "WARN")
+            self.pick_game_folder()
             return
         if g.addon is None and not self.install_addon(g, ask=True):
             return
@@ -465,6 +468,25 @@ class App:
             self.say(f"в {GAME_NAMES[key]} нет аддона — «установить аддон» справа", "WARN")
         if self.companion.running and self.companion_game != key:
             self.restart_companion(["--no-launch"])
+        self.redraw()
+
+    def pick_game_folder(self) -> None:
+        folder = filedialog.askdirectory(title="Папка World of Warcraft", parent=self.root, mustexist=True)
+        if not folder:
+            return
+        path = Path(folder)
+        found = model.find_games(self.config, extra=[path, path.parent])
+        selected = [g for g in found if g.root in (path, path.parent) or g.root.parent == path]
+        if not selected:
+            messagebox.showerror("Barrens Voice", "В этой папке не найден WoW. Выбери папку с Wow.exe или её родительскую папку.",
+                                 parent=self.root)
+            return
+        self.selected = selected[0].key
+        dirs = {**(self.config.get("game_dirs") or {}), **{g.key: str(g.root) for g in selected}}
+        self.set_config(game_dirs=dirs, game=self.selected)
+        self.games = model.find_games(self.config)
+        if all(g.addon is not None or self.install_addon(g) for g in selected):
+            self.start_companion(["--no-launch"])
         self.redraw()
 
     def update_addons(self) -> None:
@@ -895,7 +917,7 @@ class App:
         p.panel(RX0, y2, RX1, y2 + row2, "Игра")
         if not self.games:
             c.create_text(RX0 + 14, y2 + 40, anchor="nw", width=RX1 - RX0 - 28, fill=PARCHMENT, font=p.body,
-                          text="WoW Forever и WoW Retail не найдены. Укажи папку игры в «Настройках».")
+                          text="WoW не найден. Выбери папку игры ниже.")
         for i, g in enumerate(self.games):
             y0 = y2 + 36 + i * 56
             on = g.key == self.selected
@@ -919,8 +941,9 @@ class App:
                 c.create_text(RX1 - 26, y0 + 15, text=f"аддон {g.addon}", anchor="e", fill=DIM, font=p.small, tags=tag)
             c.create_text(RX0 + 26, y0 + 34, text=p.fit(str(g.root), p.small, RX1 - RX0 - 52), anchor="w", fill=DIM,
                           font=p.small, tags=tag)
-        c.create_text(RX0 + 14, y2 + 36 + n * 56, anchor="nw", width=RX1 - RX0 - 28, fill=DIM, font=p.small,
-                      text="Запускаешь игру прямо из Battle.net — лаунчер подхватит её сам.")
+        if self.games:
+            c.create_text(RX0 + 14, y2 + 36 + n * 56, anchor="nw", width=RX1 - RX0 - 28, fill=DIM, font=p.small,
+                          text="Запускаешь игру прямо из Battle.net — лаунчер подхватит её сам.")
 
         # row 3: the buttons under the log | Play under Game
         bw = (LX1 - LX0 - 2 * 10) / 3
@@ -930,10 +953,12 @@ class App:
             p.button(x0, y3 + 8, x0 + bw, y3 + 44, text, f"small{i}", action)
         playing, voiced = bool(self.running_game), self.companion.running
         starting = not playing and self.launching is not None
-        label = ("Игра запускается…" if starting else "Играть" if not playing else "Игра запущена" if voiced
+        retry_voices = voiced and self.companion.state().get("voices") == "error"
+        label = ("Повторить проверку" if retry_voices else "Указать папку WoW" if not self.games and not playing else
+                 "Игра запускается…" if starting else "Играть" if not playing else "Игра запущена" if voiced
                  else "Включить озвучку")
         p.big_button(RX0, y3, RX1, y3 + 52, label, "play", self.play,
-                     enabled=not self.busy and not starting and not (playing and voiced))
+                     enabled=not self.busy and not starting and (retry_voices or not (playing and voiced)))
 
         # the update, across the whole window
         if show_update:

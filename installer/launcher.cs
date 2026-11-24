@@ -5,13 +5,19 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 static class BarrensVoice
 {
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--check-cuda")
+            return CheckCuda(args[1]);
+
         string root = AppDomain.CurrentDomain.BaseDirectory;
         // app\current - or, when a switch was cut short between its two renames (bv/install.py point_current:
         // current -> current.old, current.new -> current), the new version's link, then the old one's
@@ -34,6 +40,35 @@ static class BarrensVoice
         };
         Process.Start(start);
         return 0;
+    }
+
+    [DllImport("nvcuda.dll")]
+    static extern int cuInit(uint flags);
+    [DllImport("nvcuda.dll")]
+    static extern int cuDriverGetVersion(out int version);
+    [DllImport("nvcuda.dll")]
+    static extern int cuDeviceGetCount(out int count);
+    [DllImport("nvcuda.dll", CharSet = CharSet.Ansi, ExactSpelling = true)]
+    static extern int cuDeviceGetName(StringBuilder name, int length, int device);
+
+    static int CheckCuda(string resultPath)
+    {
+        try
+        {
+            int version, count;
+            if (cuInit(0) != 0 || cuDeviceGetCount(out count) != 0 || count == 0 ||
+                cuDriverGetVersion(out version) != 0 || version < 12000)
+                return 2;
+            var name = new StringBuilder(128);
+            string[] cards = Enumerable.Range(0, count)
+                .Select(i => cuDeviceGetName(name, name.Capacity, i) == 0 ? name.ToString() : "NVIDIA")
+                .ToArray();
+            File.WriteAllText(resultPath, "CUDA driver API " + version + "; " + String.Join(", ", cards));
+            return 0;
+        }
+        catch (DllNotFoundException) { return 2; }
+        catch (EntryPointNotFoundException) { return 2; }
+        catch (BadImageFormatException) { return 2; }
     }
 
     // a version's folder the launcher can start from: its Python and the launcher's script are there - the same

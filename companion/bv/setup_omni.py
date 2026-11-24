@@ -20,6 +20,7 @@ def prepare(root: Path, archive: Path) -> None:
     marker.write_text(json.dumps({"app": "Barrens Voice", "runtime": "cuda"}) + "\n", encoding="utf-8")
     try:
         version, folder = install.unpack(archive, root)
+        print("BV_SETUP: core", flush=True)
         install.build(root, folder, "cuda", root / "uv.exe")
         command = [str(folder / ".venv" / "Scripts" / "python.exe"), "-m", "bv", "--prepare-omnivoice"]
         subprocess.run(command, cwd=folder / "companion", check=True)

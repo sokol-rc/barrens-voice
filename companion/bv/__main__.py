@@ -501,6 +501,7 @@ class Lines:
             self.speak(line)
 
     def speak(self, line) -> None:
+        received_at = time.monotonic()
         speaker_key = (line.kind, line.sender, line.channel)
         continuing = (speaker_key == self.last_speaker
                       and self.engines.quiet_for() <= self.config["same_speaker_gap"])
@@ -511,7 +512,7 @@ class Lines:
         # the name is left as it is
         text = protocol.with_name(name, speech_text(text, self.dictionary, self.inflector, line.declension,
                                                     self.restore_yo))
-        line = dataclasses.replace(line, text=text)
+        line = dataclasses.replace(line, text=text, received_at=received_at)
         speaker = self.engines.for_line(line)
         label = LABELS.get(line.kind, line.kind) + (f" {line.channel}" if line.channel else "")
         self.log(f"[{label}] {protocol.shown_sender(line.sender)} ({line.race or '?'}"
@@ -621,15 +622,16 @@ def main() -> int:
         except Exception as error:  # the installer must report a failure rather than advertise working CUDA
             log(f"OmniVoice не удалось установить: {error}", "ERROR")
             return 1
+        print("BV_SETUP: voices", flush=True)
         return fetch_models(config)
     if "--install-addons" in sys.argv:
         from .launcher import model
         source = model.addon_source()
         if source is not None:
             for found in model.find_games(config):
-                if found.addon is None and not found.addon_dir.exists():
+                if found.addon is None:
                     try:
-                        model.install_addon(source, found.root)
+                        model.install_addon(source, found.root, preserve_extra=True)
                         log(f"Аддон установлен: {found.name}")
                     except OSError as error:
                         log(f"Аддон можно установить из лаунчера: {error}", "WARN")
