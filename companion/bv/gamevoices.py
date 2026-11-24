@@ -306,6 +306,9 @@ def build(config: dict, out: Path, log, checker, clock=time.monotonic) -> list[S
     for done, (voice, entry) in enumerate(sorted(table.items())):
         if clock() - told >= PROGRESS_EVERY:
             told = clock()
+            from . import state
+
+            state.report(bank_progress=f" ({done}/{len(table)})")
             log(f"собираю голоса рас: {done} из {len(table)}")
         heard: list[dict] = []
         audio: dict[int, object] = {}

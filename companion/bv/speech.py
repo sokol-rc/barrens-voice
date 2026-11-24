@@ -153,6 +153,11 @@ class Speaker(threading.Thread):
                [v for v in self.voices if v.engine != failed.engine]
         return pick(sender, pool)
 
+    def local_voices(self, sex: str = "") -> list[Voice]:
+        voices = [voice for voice in self.voices if voice.engine != "edge"]
+        wanted = {"2": "Male", "3": "Female"}.get(sex)
+        return [voice for voice in voices if voice.gender == wanted] or voices
+
     # --- queue ------------------------------------------------------------------------------
 
     def describe(self, line) -> str:
@@ -219,14 +224,25 @@ class Speaker(threading.Thread):
             line = self.lines.get()
             self.working = True
             generation = self.player.generation      # a stop while this is being made drops it
+            expires_at = getattr(line, "expires_at", None)
+            if expires_at is not None:
+                from .audio import PlaybackWindow
+
+                window = PlaybackWindow(expires_at)
+                if window.expired():
+                    continue
             sender, sex = line.sender, line.sex
             text = self.accentor.accent(line.text)
-            voice = self.voice_for(sender, sex, line.sapi_voice, text)
+            voice = (pick(sender, self.local_voices(sex)) if expires_at is not None else
+                     self.voice_for(sender, sex, line.sapi_voice, text))
             if voice is None:
                 self.log("нет ни одного русского голоса SAPI")
                 continue
             attempts = [voice] * (2 if voice.engine == "edge" else 1)
-            alternative = None if line.sapi_voice else self.fallback_for(sender, sex, voice)
+            if expires_at is not None:
+                alternative = pick(sender, [v for v in self.local_voices(sex) if v is not voice])
+            else:
+                alternative = None if line.sapi_voice else self.fallback_for(sender, sex, voice)
             if alternative:
                 attempts.append(alternative)
             if self.config.get("log_details"):
@@ -244,7 +260,11 @@ class Speaker(threading.Thread):
                     continue
                 if attempt is not voice:
                     self.log(f"  вместо него: {attempt.description}")
-                self.player.play(self._loud(audio, line), generation)
+                data = self._loud(audio, line)
+                if expires_at is None:
+                    self.player.play(data, generation)
+                else:
+                    self.player.play(data, generation, window=window)
                 break
 
 

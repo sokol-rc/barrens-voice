@@ -11,6 +11,7 @@ import threading
 import time
 import wave
 from contextlib import closing
+from dataclasses import dataclass
 
 from . import protocol
 
@@ -106,6 +107,22 @@ def samples_of(data: bytes):
 
 class StreamBroken(OSError):
     """The stream failed twice for one line, the list of devices read again between: the device is gone for good."""
+
+
+@dataclass
+class PlaybackWindow:
+    expires_at: float
+    started: bool = False
+
+    def expired(self) -> bool:
+        return not self.started and time.monotonic() >= self.expires_at
+
+
+def check_output(data: bytes) -> None:
+    """Send a short, muted piece of the actual warm-up WAV through the Windows output path."""
+    samples, rate = samples_of(data)
+    probe = wav(bytes(2 * min(len(samples), rate // 4)), rate, tail=0)
+    StreamOut().play(probe, lambda: 0, threading.Event(), seconds(probe), low_latency=True)
 
 
 def preferred_output() -> int | None:
@@ -305,7 +322,8 @@ class Player(threading.Thread):
             return 0.0
         return max(0.0, time.monotonic() - self.playing_until)
 
-    def play(self, data: bytes, generation: int | None = None, *, low_latency=False) -> None:
+    def play(self, data: bytes, generation: int | None = None, *, low_latency=False,
+             window: PlaybackWindow | None = None) -> None:
         """Queue a line; one made for an earlier generation (before a stop) is dropped. With
         max_queue lines made and waiting, it waits for room - synthesis ahead of the playing - rather
         than lose a line already made (which lines to drop is decided before they are made:
@@ -314,10 +332,12 @@ class Player(threading.Thread):
             return
         made_for = self.generation
         while self.items.qsize() >= self.max_queue and self.generation == made_for:
+            if window is not None and window.expired():
+                return
             time.sleep(0.05)
         if self.generation != made_for:          # a stop while it waited
             return
-        self.items.put((self.generation, data, low_latency))
+        self.items.put((made_for, data, low_latency, window))
 
     def pause(self) -> bool:
         """Hold the lines (CatQuest speaks): the one being played is cut, to be played again from its
@@ -383,8 +403,8 @@ class Player(threading.Thread):
 
     def _play(self, item) -> None:
         self._wait_running()
-        generation, data, low_latency = item
-        if generation != self.generation:
+        generation, data, low_latency, window = item
+        if generation != self.generation or (window is not None and window.expired()):
             return
         self.stopped.clear()
         self.cut_by_pause = False
@@ -398,6 +418,8 @@ class Player(threading.Thread):
             return
         length = seconds(data)
         self.playing_until = time.monotonic() + length
+        if window is not None:
+            window.started = True
         if low_latency:
             out.play(data, self.level, self.stopped, length, low_latency=True)
         else:

@@ -216,7 +216,7 @@ def make_bank(config: dict, home: Path, log) -> list:
     checker = None
     if gamevoices.stale(config, out):
         from . import omni_runtime, state
-        state.report(voices="bank")
+        state.report(voices="bank", bank_progress="…")
         from .whisper_onnx import OnnxChecker
         if omni_runtime.native_only() and omni_runtime.ready():
             engine = "CUDAExecutionProvider"
@@ -511,36 +511,39 @@ class F5Speaker:
                 gc.collect()
                 return
             generation = self.player.generation   # a stop while this is being made drops it
-            slot = self.assigner.slot_for(line.sender, line.race, line.sex)
-            if slot is None:
-                continue
-            # numbers first: RUAccent then stresses the number words too ("шестн+адцать"; F5 left
-            # to itself put it on the first syllable in some voices)
-            text = self._prepare_text(line.text)
-            if text[-1:].isalnum() or text[-1:] == "+":
-                text += "."
-            if self.config.get("log_details") and text != line.text:
-                groups = sentence_groups(text)
-                self.log(f"    к синтезу: {text}" + (f"  ({len(groups)} части)" if len(groups) > 1 else ""))
-            started = time.perf_counter()
             try:
-                parts = first_packets(text) if self.fastest() else [text]
-                duration = 0.0
-                for index, part in enumerate(parts):
-                    if generation != self.player.generation:
-                        break
-                    data = self._render(slot, part, line, generation, index < len(parts) - 1)
-                    if data is not None:
-                        if self.config.get("debug"):
-                            duration += seconds(data)
-                        if self.fastest():
-                            self.player.play(data, generation, low_latency=True)
-                        else:
-                            self.player.play(data, generation)
-                if self.config.get("debug"):
-                    self.log(f"  синтез {time.perf_counter() - started:.2f} с, {duration:.1f} с звука")
+                self._read_line(line, generation)
             except Exception as e:  # noqa: BLE001 - one bad line must not stop the reader
                 self.log(f"{self.engine_name}: {e}")
+
+    def _read_line(self, line, generation):
+        slot = self.assigner.slot_for(line.sender, line.race, line.sex)
+        if slot is None:
+            return
+        # numbers first: RUAccent then stresses the number words too ("шестн+адцать"; F5 left
+        # to itself put it on the first syllable in some voices)
+        text = self._prepare_text(line.text)
+        if text[-1:].isalnum() or text[-1:] == "+":
+            text += "."
+        if self.config.get("log_details") and text != line.text:
+            groups = sentence_groups(text)
+            self.log(f"    к синтезу: {text}" + (f"  ({len(groups)} части)" if len(groups) > 1 else ""))
+        started = time.perf_counter()
+        parts = first_packets(text) if self.fastest() else [text]
+        duration = 0.0
+        for index, part in enumerate(parts):
+            if generation != self.player.generation:
+                break
+            data = self._render(slot, part, line, generation, index < len(parts) - 1)
+            if data is not None:
+                if self.config.get("debug"):
+                    duration += seconds(data)
+                if self.fastest():
+                    self.player.play(data, generation, low_latency=True)
+                else:
+                    self.player.play(data, generation)
+        if self.config.get("debug"):
+            self.log(f"  синтез {time.perf_counter() - started:.2f} с, {duration:.1f} с звука")
 
     def _render(self, slot, text, line, generation, trailing_gap):
         import numpy as np

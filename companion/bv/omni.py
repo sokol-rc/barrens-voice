@@ -3,15 +3,38 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import subprocess
 import threading
+import time
+from dataclasses import replace
 from pathlib import Path, PureWindowsPath
 
 from . import omni_runtime
 from .assign import Assigner
-from .f5engine import F5Speaker, make_bank, wav_bytes
+from .audio import PlaybackWindow, check_output, seconds
+from .f5engine import GAP, SENTENCE_END, F5Speaker, make_bank, wav_bytes
 from .omni_worker import profile_steps
 from .text import numbers_to_words
+
+LIVE_MAX_AGE = 8.0
+FIRST_AUDIO_BUDGET = 3.0
+LONG_AUDIO_BUDGET = 5.0
+
+
+class WorkerLost(RuntimeError):
+    """The current worker cannot accept another request."""
+
+
+def balanced_parts(text):
+    """Keep short lines whole. Split long lines only across complete sentences."""
+    if len(text) >= 75:
+        for boundary in SENTENCE_END.finditer(text):
+            first = text[:boundary.start()]
+            if len(first.split()) >= 3 and not re.search(r"\b(?:[а-яёa-z]|ул|им|рис|стр|см|гл|руб|гг|т\.\s*[деп])\.$",
+                                                          first, re.IGNORECASE):
+                return first, text[boundary.end():]
+    return (text,)
 
 
 def linux_path(value: str | Path) -> str:
@@ -69,28 +92,42 @@ class Worker:
                         raise OSError("OmniVoice остановился во время передачи аудио")
                     self.messages.put((message, data))
         except (OSError, ValueError) as error:
-            self.messages.put(({"error": str(error)}, b""))
+            self.messages.put(({"lost": True, "error": str(error)}, b""))
         finally:
-            self.messages.put(({"error": "Процесс OmniVoice остановился. Подробности в журнале OmniVoice"}, b""))
+            self.messages.put(({"lost": True, "error": "Процесс OmniVoice остановился. Подробности в журнале OmniVoice"}, b""))
 
-    def receive(self, timeout: float):
+    def receive(self, timeout: float, *, close_on_timeout=True):
         try:
             message, data = self.messages.get(timeout=timeout)
         except queue.Empty as error:
-            self.close()
+            if close_on_timeout:
+                self.close()
+                raise WorkerLost(f"OmniVoice не ответил за {timeout:.0f} с") from error
             raise TimeoutError(f"OmniVoice не ответил за {timeout:.0f} с") from error
+        if message.get("lost"):
+            raise WorkerLost(message["error"])
         if message.get("error"):
             raise RuntimeError(message["error"])
         return message, data
 
-    def synth(self, slot, text, rate, profile="quality"):
+    def synth(self, slot, text, rate, profile="quality", *, budget=None, on_slow=None, timeout=240):
         import numpy as np
 
         req = dict(text=text, path=self.voice_path(slot.path), reference=slot.text,
                    speed=max(.5, min(2., rate / 100)), profile=profile)
-        self.process.stdin.write(json.dumps(req, ensure_ascii=True).encode("ascii") + b"\n")
-        self.process.stdin.flush()
-        message, data = self.receive(240)
+        try:
+            self.process.stdin.write(json.dumps(req, ensure_ascii=True).encode("ascii") + b"\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError) as error:
+            raise WorkerLost("Не удалось передать реплику OmniVoice") from error
+        if budget is None:
+            message, data = self.receive(timeout)
+        else:
+            try:
+                message, data = self.receive(max(0.0, budget), close_on_timeout=False)
+            except TimeoutError:
+                on_slow()
+                message, data = self.receive(timeout)
         samples = np.frombuffer(data, dtype="<f4")
         if not len(samples) or not np.isfinite(samples).all() or np.max(np.abs(samples)) < .001:
             raise ValueError("OmniVoice вернул пустую или повреждённую запись")
@@ -99,7 +136,7 @@ class Worker:
     def close(self):
         try:
             self.process.stdin.close()
-        except OSError:
+        except (OSError, ValueError):
             pass
         try:
             self.process.wait(timeout=1)
@@ -114,6 +151,9 @@ class OmniSpeaker(F5Speaker):
         super().__init__(*args, **kwargs)
         self.worker = None
         self.stopped = threading.Event()
+        self.slow = threading.Event()
+        self.on_fallback = None
+        self.on_failed = None
         self.profile = self.config.get("omnivoice_profile", "quality")
 
     def current_profile(self):
@@ -123,12 +163,13 @@ class OmniSpeaker(F5Speaker):
         except (OSError, ValueError):
             return self.profile
         if isinstance(saved, dict):
-            self.profile = saved.get("omnivoice_profile", "quality")
+            self.profile = saved.get("omnivoice_profile", self.profile)
         return self.profile
 
     def _load(self):
         slots = make_bank(self.config, self.home, self.log)
-        if not any(slot.race for slot in slots):
+        first = next((slot for slot in slots if slot.race), None)
+        if first is None:
             raise RuntimeError("в клиенте игры нет русской озвучки для банка голосов")
         self.assigner = Assigner(slots, self.home / "assignments.json", self.config["players"])
         self.log("загружаю OmniVoice на CUDA …")
@@ -140,6 +181,18 @@ class OmniSpeaker(F5Speaker):
             self.card = header["gpu"]
             self.provider = worker.provider
             self.device = self.provider
+            from . import state
+
+            state.report(voices="warming")
+            self.log("проверяю синтез на CUDA и звуковое устройство …")
+            samples, rate, _ = worker.synth(first, "Проверяю озвучку чата.", 100, self.current_profile(),
+                                             timeout=120)
+            try:
+                check_output(wav_bytes(samples, rate, 1.0))
+            except Exception as error:
+                raise RuntimeError(f"Не удалось открыть аудиовыход Windows: {error}") from error
+            if self.stopped.is_set():
+                raise RuntimeError("Загрузка OmniVoice отменена")
         except BaseException:
             worker.close()
             raise
@@ -151,12 +204,86 @@ class OmniSpeaker(F5Speaker):
     def _prepare_text(self, text):
         return plain_text(text)
 
-    def _render(self, slot, text, line, generation, trailing_gap):
+    @staticmethod
+    def live(line):
+        return getattr(line, "received_at", None) is not None and line.kind != "test" and line.options.get("replay") != "1"
+
+    def _fallback(self, line):
+        if self.on_fallback is not None and not self.stopped.is_set():
+            self.on_fallback(replace(line, expires_at=line.received_at + LIVE_MAX_AGE))
+
+    def say(self, line):
+        if self.slow.is_set() and self.on_fallback is not None and self.live(line) and self.current_profile() == "balanced":
+            self._fallback(line)
+        else:
+            super().say(line)
+
+    def _read_line(self, line, generation):
         profile = self.current_profile()
-        samples, rate, elapsed = self.worker.synth(slot, text, line.rate, profile)
+        live = profile == "balanced" and self.live(line)
+        window = PlaybackWindow(line.received_at + LIVE_MAX_AGE) if live else None
+        if window is not None and window.expired():
+            self.log("OmniVoice: устаревшую реплику пропускаю")
+            return
+        slot = self.assigner.slot_for(line.sender, line.race, line.sex)
+        if slot is None:
+            return
+        text = self._prepare_text(line.text)
+        if text[-1:].isalnum():
+            text += "."
+        parts = balanced_parts(text) if profile == "balanced" else (text,)
+        skip_audio = False
+        continuation_budget = 3.0
+
+        def skip_late_tail():
+            nonlocal skip_audio
+            skip_audio = True
+            self.slow.set()
+            self.log("OmniVoice: продолжение опоздало, пропускаю его")
+
+        def fallback():
+            nonlocal skip_audio
+            skip_audio = True
+            self.slow.set()
+            if self.on_fallback is not None and generation == self.player.generation and not window.expired():
+                self.log("OmniVoice: синтез задержался, читаю реплику голосом Windows")
+                self._fallback(line)
+
+        try:
+            for index, part in enumerate(parts):
+                if generation != self.player.generation or self.stopped.is_set() or (window and window.expired()):
+                    return
+                timing = {}
+                if live and index == 0 and self.on_fallback is not None:
+                    deadline = line.received_at + (LONG_AUDIO_BUDGET if len(text) >= 75 else FIRST_AUDIO_BUDGET)
+                    if time.monotonic() >= deadline:
+                        fallback()
+                        return
+                    timing = {"budget": deadline - time.monotonic(), "on_slow": fallback, "timeout": 45}
+                elif live and index:
+                    timing = {"budget": continuation_budget, "on_slow": skip_late_tail, "timeout": 45}
+                data = self._render(slot, part, line, generation, index < len(parts) - 1, profile=profile, **timing)
+                if skip_audio or data is None:
+                    return
+                self.player.play(data, generation, low_latency=True, **({"window": window} if window else {}))
+                if live and index + 1 < len(parts):
+                    continuation_budget = max(3.0, min(10.0, seconds(data) + 2.0))
+        except WorkerLost as error:
+            if live and not skip_audio and index == 0:
+                fallback()
+            if self.on_failed is not None:
+                self.on_failed(str(error))
+            raise
+        finally:
+            self.slow.clear()
+
+    def _render(self, slot, text, line, generation, trailing_gap, *, profile=None, **timing):
+        profile = profile or self.current_profile()
+        samples, rate, elapsed = self.worker.synth(slot, text, line.rate, profile, **timing)
         if generation != self.player.generation or self.stopped.is_set():
             return None
-        data = wav_bytes(samples, rate, 1.0, self.config["kind_gain_db"].get(line.kind, 0))
+        gain = self.config["kind_gain_db"].get(line.kind, 0)
+        data = wav_bytes(samples, rate, 1.0, gain, tail=GAP) if trailing_gap else wav_bytes(samples, rate, 1.0, gain)
         if line.kind == "test" or self.config.get("debug"):
             message = "тестовый звук готов" if line.kind == "test" else "синтез"
             self.log(f"OmniVoice: {message} ({profile_steps(profile)} шагов, {elapsed:.2f} с)")

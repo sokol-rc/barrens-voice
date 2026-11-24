@@ -14,6 +14,7 @@ NOTICE_SENDER = "Barrens Voice"
 # seconds after a failed load before a line asking for the race voices loads them again (a switch to
 # Windows voices and back in the addon tries at once)
 RETRY_AFTER = 600.0
+RETRY_AFTER_CRASH = 30.0
 
 
 class Engines:
@@ -27,6 +28,7 @@ class Engines:
         self.on_ready = None    # called once F5 is loaded (all models are in the cache by then)
         self.on_models_missing = None   # called with the error when F5 failed for a model missing from the cache
         self.failed_at = None   # clock() of the last failed load: not tried again for RETRY_AFTER
+        self.retry_after = RETRY_AFTER
         self.lock = threading.Lock()
 
     def notice(self, text: str) -> None:
@@ -56,7 +58,7 @@ class Engines:
             if self.f5 is not None:
                 return
             # every frame and chat line asks for F5: a failed load is not started again for each
-            if self.failed_at is not None and self.clock() - self.failed_at < RETRY_AFTER:
+            if self.failed_at is not None and self.clock() - self.failed_at < self.retry_after:
                 return
             from .omni_runtime import selected
             if not self.omni_failed and selected(self.config):
@@ -69,6 +71,10 @@ class Engines:
         self.log("загружаю голоса рас ...")
         state.report(voices="loading")
         speaker = speaker_type(self.config, self.log, self.home, self.accentor, self.player)
+        if hasattr(speaker, "on_fallback"):
+            if getattr(self.sapi, "local_voices", lambda: True)():
+                speaker.on_fallback = self.sapi.say
+            speaker.on_failed = lambda error: self._runtime_failed(speaker, error)
         self.f5, self.ready = speaker, False
         speaker.start()
         threading.Thread(target=self._wait, args=(speaker,), daemon=True, name="f5-wait").start()
@@ -88,6 +94,7 @@ class Engines:
                 return
             if speaker.error is not None:
                 self.f5, self.failed_at = None, self.clock()
+                self.retry_after = RETRY_AFTER
                 error, missing = speaker.error, getattr(speaker, "models_missing", False)
             else:
                 self.ready, error, missing = True, None, False
@@ -102,6 +109,16 @@ class Engines:
             self.notice("Голоса рас готовы.")
             if self.on_ready:
                 self.on_ready()
+
+    def _runtime_failed(self, speaker, error) -> None:
+        with self.lock:
+            if self.f5 is not speaker:
+                return
+            self.f5, self.ready, self.failed_at = None, False, self.clock()
+            self.retry_after = RETRY_AFTER_CRASH
+        state.report(voices="error", voices_error=error)
+        self.log(f"OmniVoice остановился: {error}. Голоса Windows, пока движок готовится.")
+        speaker.shutdown()
 
     @staticmethod
     def report_ready(speaker) -> None:

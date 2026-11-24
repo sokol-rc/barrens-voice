@@ -24,6 +24,8 @@ clock = time.perf_counter
 def run(args, work):
     started = clock()
     os.environ.update(HF_HOME=str(args.hf.resolve()), HF_HUB_OFFLINE="1", BV_DATA=str(work))
+    if args.omni_companion:
+        sys.path.insert(0, str(args.omni_companion.resolve()))
     import numpy as np
     import onnxruntime as ort
     import sounddevice as sd
@@ -65,7 +67,7 @@ def run(args, work):
                 vram_peak = max(vram_peak, dedicated_mib())
         threading.Thread(target=monitor, name="vram-sampler", daemon=True).start()
 
-    config = dict(app.DEFAULT_CONFIG, f5_profile=args.profile)
+    config = dict(app.DEFAULT_CONFIG, f5_profile=args.profile, omnivoice_profile=args.profile)
     if args.graph_cache:
         from bv import f5schedule
         export = f5schedule.transformer
@@ -108,6 +110,10 @@ def run(args, work):
 
         def observe(out, frames, times, status):
             nonlocal first_block
+            if "received_s" not in row:  # OmniVoice's startup includes a muted stream probe
+                callback(out, frames, times, status)
+                out.fill(0)
+                return
             now = clock()
             try:
                 if status.output_underflow:
@@ -173,12 +179,18 @@ def run(args, work):
 
     player = Player(out=ProbeOutput(), log=log)
     player.start()
-    speaker = f5engine.F5Speaker(config, log, work, player=player)
+    if args.omni_companion:
+        from bv import omni
+
+        omni.make_bank = lambda *a: slots
+        speaker = omni.OmniSpeaker(config, log, work, player=player)
+    else:
+        speaker = f5engine.F5Speaker(config, log, work, player=player)
     speaker.lines = Input()
     speaker.start()
     if not speaker.ready.wait(300) or speaker.error or not ready.wait(5):
-        raise RuntimeError(speaker.error or "F5 load timeout")
-    if not speaker.accentor.enabled:
+        raise RuntimeError(speaker.error or "TTS load timeout")
+    if not args.omni_companion and not speaker.accentor.enabled:
         raise RuntimeError("RUAccent is unavailable")
 
     def timed(obj, attr, label):
@@ -190,15 +202,21 @@ def run(args, work):
             return result
         setattr(obj, attr, measured)
 
-    for obj, attr, label in [(app, "speech_text", "text"), (speaker.accentor, "accent", "ruaccent"), (f5engine, "numbers_to_words", "numbers"),
+    if args.omni_companion:
+        timed(app, "speech_text", "text")
+        timed(speaker.worker, "synth", "omnivoice")
+        timed(omni, "wav_bytes", "pcm")
+        steps, transformer = omni.profile_steps(args.profile), speaker.provider
+    else:
+        for obj, attr, label in [(app, "speech_text", "text"), (speaker.accentor, "accent", "ruaccent"), (f5engine, "numbers_to_words", "numbers"),
                              (f5engine, "shape", "intonation"), (f5engine, "wav_bytes", "pcm"),
                              (speaker.onnx.pre, "run", "pre"), (speaker.onnx.pre, "run_with_iobinding", "pre"),
                              (speaker.onnx.net, "run_with_iobinding", "transformer"),
                              (speaker.onnx.dec, "run", "decode"), (speaker.onnx.dec, "run_with_iobinding", "decode")]:
-        timed(obj, attr, label)
-
-    if getattr(speaker.onnx, "accelerated", False):
-        timed(speaker.onnx.cuda_dec, "run_with_iobinding", "decode")
+            timed(obj, attr, label)
+        if getattr(speaker.onnx, "accelerated", False):
+            timed(speaker.onnx.cuda_dec, "run_with_iobinding", "decode")
+        steps, transformer = speaker.onnx.steps, speaker.onnx.net.get_providers()[0]
     expect_acceleration = args.profile != "quality" and speaker.provider == "CUDAExecutionProvider"
     if args.trt_dir and not speaker.onnx.using_trt:
         raise RuntimeError("Requested TensorRT fell back at startup")
@@ -212,7 +230,7 @@ def run(args, work):
     corpus = Path(__file__).with_name("tts-corpus.txt").read_bytes()
     header = dict(profile=args.profile, startup_s=clock() - started, gpu=initial_gpu, ort=ort.__version__,
                   device=str(sd.query_devices(output.device)["name"]), provider=speaker.provider,
-                  steps=speaker.onnx.steps, transformer=speaker.onnx.net.get_providers()[0], full_playback=args.full_playback, bank_sha256=hashlib.sha256(manifest).hexdigest(),
+                  steps=steps, transformer=transformer, full_playback=args.full_playback, bank_sha256=hashlib.sha256(manifest).hexdigest(),
                   corpus_sha256=hashlib.sha256(corpus).hexdigest())
     if args.sample_vram:
         header["startup_vram_peak_mib"] = vram_peak
@@ -294,6 +312,7 @@ if __name__ == "__main__":
     parser.add_argument("--hf", type=Path, required=True)
     parser.add_argument("--pairs", type=int, default=30, choices=range(1, 31))
     parser.add_argument("--profile", choices=("quality", "balanced", "fastest"), default="quality")
+    parser.add_argument("--omni-companion", type=Path, help="companion folder of a managed Windows OmniVoice version")
     parser.add_argument("--graph-cache", type=Path, help="retain exported graphs and TensorRT engines between runs")
     parser.add_argument("--trt-dir", type=Path, help="directory containing the optional TensorRT 10 DLLs")
     parser.add_argument("--provider", choices=("CUDAExecutionProvider", "DmlExecutionProvider"))
@@ -312,5 +331,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not math.isfinite(args.wow_gap) or args.wow_gap < 0:
         parser.error("--wow-gap must be a finite nonnegative number of seconds")
+    if args.omni_companion and (args.profile == "fastest" or args.graph_cache or args.trt_dir or args.provider or args.steps):
+        parser.error("OmniVoice supports the quality and balanced profiles with its managed CUDA runtime")
     with tempfile.TemporaryDirectory() as tmp:
         run(args, Path(tmp))

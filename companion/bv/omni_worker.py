@@ -15,6 +15,21 @@ def profile_steps(profile):
     return 24 if profile == "balanced" else 32
 
 
+def cuda_device(torch):
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA недоступна для OmniVoice")
+    devices = sorted(range(torch.cuda.device_count()),
+                     key=lambda index: torch.cuda.get_device_properties(index).total_memory, reverse=True)
+    for index in devices:
+        try:
+            torch.ones(1, device=f"cuda:{index}", dtype=torch.float16).sum().item()
+        except RuntimeError as error:
+            print(f"CUDA {index}: {error}", file=sys.stderr, flush=True)
+            continue
+        return index
+    raise RuntimeError("Ни одна из видеокарт NVIDIA не выполнила проверку CUDA FP16")
+
+
 def run(model_path):
     # wsl.exe can outlive its Windows parent. Watching EOF also cancels an in-flight GPU call.
     requests = queue.Queue()
@@ -44,16 +59,16 @@ def run(model_path):
         if os.name == "nt":
             reader.start()
         torch.set_num_threads(2)
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA недоступна для OmniVoice")
-        model = OmniVoice.from_pretrained(model_path, device_map="cuda:0", dtype=torch.float16)
+        index = cuda_device(torch)
+        with torch.cuda.device(index):
+            model = OmniVoice.from_pretrained(model_path, device_map=f"cuda:{index}", dtype=torch.float16)
 
         @functools.lru_cache(maxsize=24)
         def prompt(path, reference):
             return model.create_voice_clone_prompt(ref_audio=path, ref_text=reference)
 
         torch.cuda.empty_cache()
-        reply(dict(gpu=torch.cuda.get_device_name(), rate=model.sampling_rate))
+        reply(dict(gpu=torch.cuda.get_device_name(index), rate=model.sampling_rate))
         while True:
             try:
                 request = json.loads(requests.get())
@@ -71,4 +86,10 @@ def run(model_path):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    if sys.argv[1] == "--probe":
+        import torch
+        import torchaudio  # noqa: F401 - verify its native DLLs too
+
+        print(torch.cuda.get_device_name(cuda_device(torch)))
+    else:
+        run(sys.argv[1])

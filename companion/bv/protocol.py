@@ -187,6 +187,8 @@ class Line:
     options: dict = field(default_factory=dict)   # all the line's options, as sent
     raw: str = ""            # the line as typed in chat, before any rule (for the log)
     volume: int | None = None  # the addon's volume slider, percent 0..240; None: config.json alone
+    received_at: float | None = None  # monotonic time at the companion, for live speech
+    expires_at: float | None = None   # latest useful start for a Windows fallback
 
     def gain(self, config: dict) -> float:
         """The loudness to play this line at (0..1): config.json's `volume` times the addon's."""
