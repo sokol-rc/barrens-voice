@@ -1,5 +1,6 @@
 """OmniVoice applies saved profile changes to the next synthesis request."""
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import time
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from bv import __main__, whisper_onnx
+from bv import __main__, omni_runtime, whisper_onnx
 from bv.audio import Player, PlaybackWindow, wav
 from bv.launcher.model import update_config
 from bv.omni import OmniSpeaker, Worker
@@ -16,6 +17,18 @@ from bv.protocol import Line
 
 
 class OmniProfile(unittest.TestCase):
+    def test_existing_windows_checkout_environment_is_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "uv.lock").write_bytes(b"version = 1\n")
+            version = hashlib.sha256(b"version = 1\r\n").hexdigest()[:12]
+            env = root / "omnivoice" / f"runtime-{version}"
+            (env / "Scripts").mkdir(parents=True)
+            (env / "Scripts" / "python.exe").touch()
+            (env / ".ready").touch()
+            with patch.object(omni_runtime, "PROJECT", root), patch.object(omni_runtime, "CACHE_DIR", root):
+                self.assertEqual(omni_runtime.environment.__wrapped__(), env)
+
     def test_native_install_only_fetches_whisper_and_accent_models(self):
         with (patch("bv.omni_runtime.native_only", return_value=True),
               patch("huggingface_hub.hf_hub_download") as fetch,

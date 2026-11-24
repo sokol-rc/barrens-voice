@@ -267,6 +267,7 @@ class Layout(unittest.TestCase):
         from bv import launch
         from bv.launcher import app
         a = self.make(1.0)
+        a.games, a.selected = [game("forever", "0.4.1")], "forever"
         for line in (f"{launch.NOT_LAUNCHED[0]}Wow.exe запущен", f"[лаунчер] {launch.NOT_LAUNCHED[1]}",
                      f"{launch.NOT_LAUNCHED[2]}: укажи его в «Настройках»", f"{launch.NOT_LAUNCHED[3]} — нажми «Играть» в нём"):
             with self.subTest(line=line):
@@ -284,6 +285,13 @@ class Layout(unittest.TestCase):
         a.follow_launch([], 1001.0)
         self.assertIsNone(a.launching)
         self.assertEqual(self.play_button(a), ("Играть", True))
+
+    def test_play_offers_folder_picker_without_a_detected_game(self):
+        a = self.make(1.0)
+        self.assertEqual(self.play_button(a), ("Указать папку WoW", True))
+        with mock.patch.object(a, "pick_game_folder") as picker:
+            a.play()
+        picker.assert_called_once_with()
 
     def test_the_start_with_windows_takes_the_close_check_off(self):
         # turning the start with Windows on unchecks «Закрываться вместе с игрой» in config.json: off again, the

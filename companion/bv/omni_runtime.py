@@ -21,8 +21,12 @@ MODEL_DIR = CACHE_DIR / "omnivoice" / MODEL_REVISION
 
 @lru_cache(maxsize=1)
 def environment() -> Path:
-    version = hashlib.sha256((PROJECT / "uv.lock").read_bytes()).hexdigest()[:12]
-    return CACHE_DIR / "omnivoice" / f"runtime-{version}"
+    lock = (PROJECT / "uv.lock").read_bytes().replace(b"\r\n", b"\n")
+    candidates = [CACHE_DIR / "omnivoice" / f"runtime-{hashlib.sha256(data).hexdigest()[:12]}"
+                  for data in (lock, lock.replace(b"\n", b"\r\n"))]
+    # Releases from Windows and Linux checkouts used different byte hashes for the same locked environment.
+    return next((path for path in candidates if (path / ".ready").is_file() and
+                 (path / "Scripts" / "python.exe").is_file()), candidates[0])
 
 
 def interpreter() -> Path:
