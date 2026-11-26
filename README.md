@@ -1,6 +1,6 @@
 # Barrens Voice
 
-> **Сборка OmniVoice для NVIDIA.** Установщик сам готовит Windows CUDA и ставит совместимый аддон в найденный WoW. [Скачать бета-версию](https://github.com/sokol-rc/barrens-voice/releases/tag/v0.5.0-beta.6)
+> **Сборка OmniVoice для NVIDIA.** Установщик сам готовит Windows CUDA и ставит совместимый аддон в найденный WoW. [Скачать бета-версию](https://github.com/sokol-rc/barrens-voice/releases/tag/v0.5.0-beta.7)
 
 *Для тех, у кого левый глаз устал косить в угол чата.*
 
@@ -36,7 +36,7 @@
 
 ## Установка
 
-1. Скачай [BarrensVoice-Setup.exe](https://github.com/sokol-rc/barrens-voice/releases/download/v0.5.0-beta.6/BarrensVoice-Setup.exe), запусти и нажми **«Установить»**.
+1. Скачай [BarrensVoice-Setup.exe](https://github.com/sokol-rc/barrens-voice/releases/download/v0.5.0-beta.7/BarrensVoice-Setup.exe), запусти и нажми **«Установить»**.
 
    > Windows покажет предупреждение SmartScreen «Windows защитила ваш компьютер»: «Подробнее» → «Выполнить в любом случае».
 
