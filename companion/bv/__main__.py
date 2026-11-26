@@ -44,7 +44,6 @@ DEFAULT_CONFIG = {
     "f5_end_check": "silence",
     "f5_profile": "quality",
     "race_voice_backend": "auto",
-    "race_voice_fallback": False,
     "omnivoice_profile": "balanced" if omni_runtime.native_only() else "quality",
     "omnivoice_wsl_distro": "Ubuntu",
     "omnivoice_wsl_python": "",
@@ -506,6 +505,7 @@ class Lines:
         speaker_key = (line.kind, line.sender, line.channel)
         continuing = (speaker_key == self.last_speaker
                       and self.engines.quiet_for() <= self.config["same_speaker_gap"])
+        self.last_speaker = speaker_key
         name, text, droppable = protocol.split_name(line.text)
         if continuing and droppable:
             name, text = "", text.lstrip()
@@ -514,10 +514,6 @@ class Lines:
                                                     self.restore_yo))
         line = dataclasses.replace(line, text=text, received_at=received_at)
         speaker = self.engines.for_line(line)
-        if speaker is None:
-            self.last_speaker = None
-            return
-        self.last_speaker = speaker_key
         label = LABELS.get(line.kind, line.kind) + (f" {line.channel}" if line.channel else "")
         self.log(f"[{label}] {protocol.shown_sender(line.sender)} ({line.race or '?'}"
                  f"{', м' if line.sex == '2' else ', ж' if line.sex == '3' else ''})"

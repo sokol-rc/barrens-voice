@@ -309,8 +309,7 @@ def describe(state: dict, running: bool, exit_code: int | None, game: str | None
         engine += f" · {state['f5_steps']} шагов"
     error_text = ("Проверь устройство вывода Windows и повтори проверку" if
                   str(state.get("voices_error", "")).startswith("Не удалось открыть аудиовыход Windows") else
-                  "Голоса рас недоступны — читаю голосами Windows" if state.get("windows_fallback", True) else
-                  "Голоса рас недоступны · озвучка на паузе")
+                  "Голоса рас недоступны — читаю голосами Windows")
     third = {
         "bank": (YELLOW, "Голоса рас: готовлю образцы из WoW" + state.get("bank_progress", "…")),
         "loading": (YELLOW, "Голоса рас загружаются…"),

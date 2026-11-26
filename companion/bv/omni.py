@@ -253,15 +253,15 @@ class OmniSpeaker(F5Speaker):
             for index, part in enumerate(parts):
                 if generation != self.player.generation or self.stopped.is_set() or (window and window.expired()):
                     return
-                timing = {"timeout": 45} if live else {}
+                timing = {}
                 if live and index == 0 and self.on_fallback is not None:
                     deadline = line.received_at + (LONG_AUDIO_BUDGET if len(text) >= 75 else FIRST_AUDIO_BUDGET)
                     if time.monotonic() >= deadline:
                         fallback()
                         return
-                    timing.update(budget=deadline - time.monotonic(), on_slow=fallback)
+                    timing = {"budget": deadline - time.monotonic(), "on_slow": fallback, "timeout": 45}
                 elif live and index:
-                    timing.update(budget=continuation_budget, on_slow=skip_late_tail)
+                    timing = {"budget": continuation_budget, "on_slow": skip_late_tail, "timeout": 45}
                 data = self._render(slot, part, line, generation, index < len(parts) - 1, profile=profile, **timing)
                 if skip_audio or data is None:
                     return

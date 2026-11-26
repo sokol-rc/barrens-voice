@@ -22,7 +22,6 @@ class Engines:
         self.config, self.log, self.home, self.clock = config, log, home, clock
         self.player = player
         self.sapi, self.accentor = sapi, accentor
-        self.windows_fallback = config.get("race_voice_fallback") is True
         self.f5 = None
         self.ready = False
         self.omni_failed = False
@@ -73,7 +72,7 @@ class Engines:
         state.report(voices="loading")
         speaker = speaker_type(self.config, self.log, self.home, self.accentor, self.player)
         if hasattr(speaker, "on_fallback"):
-            if self.windows_fallback and getattr(self.sapi, "local_voices", lambda: True)():
+            if getattr(self.sapi, "local_voices", lambda: True)():
                 speaker.on_fallback = self.sapi.say
             speaker.on_failed = lambda error: self._runtime_failed(speaker, error)
         self.f5, self.ready = speaker, False
@@ -86,8 +85,7 @@ class Engines:
             if self.f5 is not speaker:
                 return                      # unloaded meanwhile
             from .omni_runtime import native_only
-            if (self.windows_fallback and speaker.error is not None and
-                    getattr(speaker, "engine_name", "") == "OmniVoice" and not native_only()):
+            if speaker.error is not None and getattr(speaker, "engine_name", "") == "OmniVoice" and not native_only():
                 from .f5engine import F5Speaker
 
                 self.omni_failed = True
@@ -101,9 +99,8 @@ class Engines:
             else:
                 self.ready, error, missing = True, None, False
         if error is not None:
-            state.report(voices="error", voices_error=error, windows_fallback=self.windows_fallback)
-            self.notice("Голоса рас недоступны, читаю голосами Windows." if self.windows_fallback else
-                        "Голоса рас недоступны. Озвучка чата приостановлена.")
+            state.report(voices="error", voices_error=error)
+            self.notice("Голоса рас недоступны, читаю голосами Windows.")
             self.log(f"  причина: {error}")
             if missing and self.on_models_missing:      # a video card's failure is no reason to go online
                 self.on_models_missing(error)
@@ -119,8 +116,8 @@ class Engines:
                 return
             self.f5, self.ready, self.failed_at = None, False, self.clock()
             self.retry_after = RETRY_AFTER_CRASH
-        state.report(voices="error", voices_error=error, windows_fallback=self.windows_fallback)
-        self.log(f"OmniVoice остановился: {error}")
+        state.report(voices="error", voices_error=error)
+        self.log(f"OmniVoice остановился: {error}. Голоса Windows, пока движок готовится.")
         speaker.shutdown()
 
     @staticmethod
@@ -176,15 +173,12 @@ class Engines:
         return self.player.quiet_for() if self.player is not None else 1e9
 
     def for_line(self, line: Line):
-        """Choose the requested engine. Skip race chat during preparation unless fallback is enabled."""
-        if line.sapi_voice:
-            return self.sapi
+        """The engine for a chat line: F5 when the line asks for it and it is ready (starting it if
+        need be; meanwhile Windows voices), else SAPI."""
         voice = line.voice or self.config["engine"]
         if voice == "f5":
             self._load()
             with self.lock:
                 if self.ready and self.f5 is not None:
                     return self.f5
-            if not self.windows_fallback:
-                return None
         return self.sapi
