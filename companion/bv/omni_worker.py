@@ -77,7 +77,8 @@ def run(model_path):
                     voice = prompt(request["path"], request["reference"])
                     item = model.generate(text=request["text"], language="ru",
                                           voice_clone_prompt=voice, speed=request["speed"],
-                                          num_step=profile_steps(request.get("profile")))[0]
+                                          num_step=profile_steps(request.get("profile")),
+                                          position_temperature=0.0)[0]
                 samples = np.asarray(item, dtype="<f4").reshape(-1).tobytes()
                 reply(dict(bytes=len(samples), rate=model.sampling_rate,
                            seconds=time.perf_counter() - start), samples)
