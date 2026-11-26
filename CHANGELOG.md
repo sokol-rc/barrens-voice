@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Installation and warm-up for NVIDIA
 
-  Setup checks disk space and the CUDA driver before downloading, displays each stage and can retry using cached files. The launcher verifies synthesis and audio output before it reports that the race voices are ready. Balanced can play the first sentence of a long message early, use a local Windows voice for delayed live chat and drop messages that have become stale.
+  Setup checks disk space and the CUDA driver before downloading, displays each stage and can retry using cached files. The launcher verifies synthesis and audio output before it reports that the race voices are ready. Balanced can play the first sentence of a long message early and drop stale messages. Automatic fallback to Windows voices is opt-in so characters keep their voice during start-up and GPU slowdowns.
 
 - Automatic addon installation
 
@@ -399,7 +399,7 @@ The first public release, and the first on GitHub: an installer, updates by them
 
   The addon sends the chat to a companion program on Windows, which reads it aloud with a voice of its own for every player — race voices (F5-TTS) or Windows voices — and a slang dictionary («WTS» — «продам», «дд» — «дамагер»).
 
-[0.5.0]: https://github.com/sokol-rc/barrens-voice/releases/tag/v0.5.0-beta.4
+[0.5.0]: https://github.com/sokol-rc/barrens-voice/releases/tag/v0.5.0-beta.5
 [0.4.1]: https://github.com/sokol-rc/barrens-voice/releases/tag/v0.4.1
 [0.4.0]: https://github.com/rgeraskin/barrens-voice/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rgeraskin/barrens-voice/compare/v0.2.1...v0.3.0

@@ -92,11 +92,32 @@ class EnginesTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def make(self, home=Path("."), clock=None):
+    def make(self, home=Path("."), clock=None, *, fallback=True):
         self.sapi = FakeSapi()
         self.logged = []
-        return Engines({"engine": "f5", "spoken_notices": True}, self.logged.append, home, self.sapi, None,
+        return Engines({"engine": "f5", "spoken_notices": True, "race_voice_fallback": fallback},
+                       self.logged.append, home, self.sapi, None,
                        **({"clock": clock} if clock else {}))
+
+    def test_same_guild_character_uses_race_voice_only_after_warmup(self):
+        class LoadingOmni(FakeF5):
+            engine_name = "OmniVoice"
+            on_fallback = None
+
+        FakeF5.fail = None
+        engines = self.make(fallback=False)
+        engines.config["race_voice_backend"] = "omnivoice"
+        line = Line("guild", "Орк", "Orc", "2", "", "", "Сообщение", 100, "f5")
+        with unittest.mock.patch.dict(sys.modules, {"bv.omni": types.SimpleNamespace(OmniSpeaker=LoadingOmni)}):
+            self.assertIsNone(engines.for_line(line))
+            speaker = engines.f5
+            self.assertIsNone(speaker.on_fallback)
+            speaker.ready.set()
+            wait()
+            self.assertIs(engines.for_line(line), speaker)
+            engines.want("sapi")
+            self.assertIs(engines.for_line(Line("guild", line.sender, line.race, line.sex, "", "", "текст",
+                                                voice="sapi")), self.sapi)
 
     def test_omnivoice_start_failure_loads_f5(self):
         fallback_started = threading.Event()
